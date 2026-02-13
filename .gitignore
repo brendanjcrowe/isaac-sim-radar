@@ -1,3 +1,61 @@
+# =============================================================================
+# Isaac Sim / Omniverse
+# =============================================================================
+
+# Omniverse local data and cache
+_isaac_sim/
+_build/
+.thumbs/
+*.log
+
+# USD intermediate/compiled formats (keep source .usda/.usd files)
+*.usdz
+
+# Large binary scene caches
+*.mdl
+*.nvdb
+
+# Omniverse Nucleus local cache
+omni.localcache/
+
+# Sensor data output (binary dumps from TranscoderRadar, etc.)
+data/output/
+*.bin
+*.dat
+
+# =============================================================================
+# ROS2
+# =============================================================================
+
+# ROS2 build artifacts
+install/
+log/
+build/
+
+# rosbag recordings (large, store separately)
+rosbags/
+*.db3
+*.mcap
+metadata.yaml
+
+# =============================================================================
+# Sensor / Analysis Data
+# =============================================================================
+
+# Recorded point clouds and analysis outputs
+*.pcd
+*.ply
+*.las
+*.laz
+*.npy
+*.npz
+*.hdf5
+*.h5
+
+# =============================================================================
+# Python
+# =============================================================================
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
