@@ -75,8 +75,11 @@ build_ros2_workspace() {
         return 0
     fi
 
+    # ROS2 setup scripts use unbound variables — temporarily relax strict mode
     # shellcheck disable=SC1091
+    set +u
     source "/opt/ros/${ROS_DISTRO}/setup.bash"
+    set -u
 
     cd "${SCRIPT_DIR}/ros2_ws"
     colcon build --symlink-install

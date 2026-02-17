@@ -13,9 +13,10 @@
 - [ ] Verify launch and GPU detection
 - *Manual/GUI step*
 
-### 1b. Install ROS2 Jazzy
-- [ ] Run `bash setup_env.sh` (handles apt repo, GPG key, package install)
-- [ ] Verify: `source /opt/ros/jazzy/setup.bash && ros2 --help`
+### 1b. Install ROS2 Jazzy — DONE
+- [x] Installed `ros-jazzy-desktop` + rviz2, sensor-msgs, tf2-ros, slam-toolbox, colcon
+- [x] Initialized rosdep
+- [x] Verified: `source /opt/ros/jazzy/setup.bash`
 
 ### 1c. Install Python Dependencies — DONE
 - [x] Created conda environment `isaac-radar` (Python 3.12)
@@ -85,8 +86,8 @@
 ## Verification Checklist
 
 - [x] Unit tests pass: `conda activate isaac-radar && pytest tests/ -v` → 23/23 passed
-- [ ] `bash setup_env.sh` → ROS2 Jazzy installed, workspace builds cleanly
-- [ ] `ros2 run radar_bridge radar_to_ros2` → node starts, listens on UDP port
+- [x] ROS2 Jazzy installed, `colcon build --symlink-install` → `radar_bridge` built cleanly
+- [x] `ros2 run radar_bridge radar_to_ros2` → node starts, listens on `239.0.0.1:10001`
 - [ ] Send mock UDP data → see PointCloud2 messages on `/radar/point_cloud`
 - [ ] Open Isaac Sim → run `launch_scene.py` → scene loads, robot spawns, sensors active
 - [ ] `ros2 topic list` shows radar and lidar topics
