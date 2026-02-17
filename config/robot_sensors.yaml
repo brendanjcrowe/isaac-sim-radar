@@ -1,0 +1,26 @@
+# Sensor mount transforms relative to base_link
+# Used for TF publishing and sensor placement
+
+frames:
+  base_link:
+    parent: "odom"
+
+  radar_link:
+    parent: "base_link"
+    translation: [0.3, 0.0, 0.4]    # front-center, 40cm high
+    rotation_rpy: [0.0, 0.0, 0.0]   # facing forward
+
+  lidar_link:
+    parent: "base_link"
+    translation: [0.0, 0.0, 0.5]    # top-center, 50cm high
+    rotation_rpy: [0.0, 0.0, 0.0]
+
+  camera_link:
+    parent: "base_link"
+    translation: [0.25, 0.0, 0.45]
+    rotation_rpy: [0.0, 0.0, 0.0]
+
+  imu_link:
+    parent: "base_link"
+    translation: [0.0, 0.0, 0.15]
+    rotation_rpy: [0.0, 0.0, 0.0]

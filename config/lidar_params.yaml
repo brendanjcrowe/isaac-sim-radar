@@ -1,0 +1,14 @@
+# RTX Lidar configuration for Isaac Sim
+# Using Ouster OS1-64 profile as ground-truth comparison sensor
+
+config_name: "OS1_64"
+
+# Sensor mount offset relative to robot base_link (meters)
+mount_offset:
+  x: 0.0
+  y: 0.0
+  z: 0.5    # top-mounted
+
+# ROS2 output
+ros2_topic: "/lidar/point_cloud"
+frame_id: "lidar_link"

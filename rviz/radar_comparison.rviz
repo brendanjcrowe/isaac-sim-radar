@@ -1,0 +1,85 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 5
+      Line Style:
+        Value: Lines
+      Color: 100; 100; 100
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Radar Point Cloud
+      Enabled: true
+      Topic:
+        Value: /radar/point_cloud
+        Depth: 5
+        Reliability Policy: Best Effort
+      Size (Pixels): 5
+      Style: Points
+      Color Transformer: FlatColor
+      Color: 255; 50; 50
+      Decay Time: 0.5
+      Min Color: 0; 0; 0
+      Max Color: 255; 255; 255
+
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LiDAR Point Cloud
+      Enabled: true
+      Topic:
+        Value: /lidar/point_cloud
+        Depth: 5
+        Reliability Policy: Best Effort
+      Size (Pixels): 2
+      Style: Points
+      Color Transformer: FlatColor
+      Color: 50; 200; 50
+      Decay Time: 0
+      Min Color: 0; 0; 0
+      Max Color: 255; 255; 255
+
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/ThirdPersonFollower
+      Distance: 15
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Pitch: 0.5
+      Target Frame: base_link
+      Yaw: 3.14
+    Name: Current View
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 800
+  Width: 1200
+  X: 100
+  Y: 100

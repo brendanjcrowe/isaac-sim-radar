@@ -1,0 +1,49 @@
+# WpmDmatApproxRadar configuration
+# These parameters are applied to the RTX Radar sensor in Isaac Sim.
+# Reference: Isaac Sim 4.5 Radar Extension docs
+
+model: "WpmDmatApproxRadar"
+
+# Sensor mount offset relative to robot base_link (meters)
+mount_offset:
+  x: 0.3    # forward from center
+  y: 0.0    # centered laterally
+  z: 0.4    # height above base
+
+# Range configuration
+range:
+  max_range_m: 100.0
+  range_resolution_m: 0.1
+  range_separation_m: 0.04
+
+# Velocity (Doppler) configuration
+velocity:
+  max_velocity_mps: 30.0
+  velocity_resolution_mps: 0.1
+  velocity_separation_mps: 0.04
+
+# Angular field of view
+fov:
+  max_azimuth_deg: 75.0
+  max_elevation_deg: 20.0
+  azimuth_resolution_deg: 1.0
+  elevation_resolution_deg: 2.0
+
+# CFAR detector tuning
+cfar:
+  test_cells: 16
+  guard_cells: 4
+  threshold_db: 12.0
+
+# Noise model
+noise:
+  range_noise_mean: 0.0
+  range_noise_sdev: 0.02
+  azimuth_noise_sdev_rad: 0.01
+  elevation_noise_sdev_rad: 0.02
+
+# UDP output (TranscoderRadar node settings)
+udp:
+  remote_ip: "239.0.0.1"
+  remote_port: 10001
+  interface_ip: "0.0.0.0"

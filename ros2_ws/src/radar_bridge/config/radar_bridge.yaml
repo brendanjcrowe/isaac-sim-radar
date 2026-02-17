@@ -1,0 +1,13 @@
+radar_to_ros2:
+  ros__parameters:
+    # UDP multicast settings (must match TranscoderRadar OmniGraph node)
+    multicast_group: "239.0.0.1"
+    port: 10001
+    interface: "0.0.0.0"
+
+    # ROS2 output settings
+    frame_id: "radar_link"
+    topic: "/radar/point_cloud"
+
+    # Socket polling
+    socket_timeout: 0.05
