@@ -17,8 +17,9 @@
 - [ ] Run `bash setup_env.sh` (handles apt repo, GPG key, package install)
 - [ ] Verify: `source /opt/ros/jazzy/setup.bash && ros2 --help`
 
-### 1c. Install Python Dependencies
-- [ ] `pip install --user -r requirements.txt`
+### 1c. Install Python Dependencies — DONE
+- [x] Created conda environment `isaac-radar` (Python 3.12)
+- [x] Installed: numpy, open3d, matplotlib, pyyaml, scipy, pytest
 
 ---
 
@@ -72,8 +73,18 @@
 
 ---
 
+## Step 7: Unit Tests — DONE
+
+- [x] `tests/test_udp_listener.py` — 10 tests: packet parsing, struct sizes, truncation handling, UDP send/receive
+- [x] `tests/test_analysis.py` — 9 tests: distance metrics, coverage ratio, Open3D point cloud creation
+- [x] `tests/test_config.py` — 4 tests: all YAML configs load with correct structure/values
+- [x] All 23 tests passing (conda env `isaac-radar`, pytest)
+
+---
+
 ## Verification Checklist
 
+- [x] Unit tests pass: `conda activate isaac-radar && pytest tests/ -v` → 23/23 passed
 - [ ] `bash setup_env.sh` → ROS2 Jazzy installed, workspace builds cleanly
 - [ ] `ros2 run radar_bridge radar_to_ros2` → node starts, listens on UDP port
 - [ ] Send mock UDP data → see PointCloud2 messages on `/radar/point_cloud`
