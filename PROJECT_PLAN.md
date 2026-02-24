@@ -2,8 +2,9 @@
 
 > **Status**: Active / Living Document
 > **Created**: 2026-02-13
-> **Last Updated**: 2026-02-13
-> **Isaac Sim Version**: 4.5.0
+> **Last Updated**: 2026-02-23
+> **Isaac Sim Version**: 5.1.0
+> **Deployment**: Docker (multi-container)
 
 ---
 
@@ -19,7 +20,7 @@
 
 ## Project Goal
 
-Build a realistic city/town environment in NVIDIA Isaac Sim 4.5 to simulate a mobile robot platform equipped with a mmWave radar and complementary sensors. Traverse the environment, capture radar returns, display point clouds, and compare radar data against LiDAR point clouds/maps.
+Build a realistic city/town environment in NVIDIA Isaac Sim 5.1 to simulate a mobile robot platform equipped with a mmWave radar and complementary sensors. Traverse the environment, capture radar returns, display point clouds, and compare radar data against LiDAR point clouds/maps.
 
 ---
 
@@ -28,26 +29,53 @@ Build a realistic city/town environment in NVIDIA Isaac Sim 4.5 to simulate a mo
 ### 0.1 Hardware/Software Requirements
 
 - **GPU**: NVIDIA RTX 3080+ (RTX 4090 or A6000 recommended for large urban scenes + multiple RTX sensors)
-- **Isaac Sim 4.5** installed via Omniverse Launcher
-- **ROS2 Humble or Jazzy** — sensor data transport, visualization, and analysis
-- **Isaac Sim ROS2 Bridge extension** enabled
-- **Python 3.10+** with NumPy, Open3D, matplotlib for offline analysis
+- **Host GPU Driver**: 580.65.06+ (required for Isaac Sim 5.x containers)
+- **Docker** with **NVIDIA Container Toolkit** (`nvidia-ctk`)
+- **NGC account** for pulling `nvcr.io/nvidia/isaac-sim:5.1.0`
 
-### 0.2 Enable Required Extensions
+### 0.2 Deployment Architecture **[CHOSEN]**
 
-In Isaac Sim Extension Manager, enable:
+> **Decision**: Pivoted to Docker multi-container on 2026-02-23. Provides reproducibility, portability to different compute (local dev → cloud GPU), and clean separation of concerns.
 
-- `omni.sensors.nv.radar` — [Radar Extension](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/sensors/omni_sensors_docs/radar_extension.html)
+**Multi-container docker-compose setup:**
+
+| Container | Base Image | Role |
+|---|---|---|
+| `isaac-sim` | `nvcr.io/nvidia/isaac-sim:5.1.0` (Ubuntu 22.04) | Headless Isaac Sim — scene loading, physics, radar/lidar sensor simulation |
+| `ros2-bridge` | Ubuntu 22.04 + ROS2 Humble | Radar UDP bridge → PointCloud2, RViz2, TF publishers, analysis tools |
+
+- **Networking**: `--network host` for ROS2 DDS discovery + UDP radar multicast
+- **GPU**: Passed to `isaac-sim` container via NVIDIA Container Toolkit
+- **Volumes**: Shared `config/`, scene assets, bag recording output
+
+### 0.3 Version Matrix
+
+| Component | Version | Rationale |
+|---|---|---|
+| Isaac Sim | 5.1.0 | Latest GA (Oct 2025), best sensor/extension support |
+| Ubuntu (containers) | 22.04 | NVIDIA's base image for Isaac Sim 5.x |
+| ROS2 | Humble | LTS, native to Ubuntu 22.04, well-tested with Isaac Sim |
+| Python | 3.10+ (container), 3.12 (host) | Container matches Isaac Sim's Python; host for analysis |
+
+### 0.4 Enable Required Extensions
+
+Extensions are enabled programmatically via `isaac_sim_scripts/enable_extensions.py` inside the `isaac-sim` container:
+
+- `omni.sensors.nv.radar` — [Radar Extension](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/sensors/omni_sensors_docs/radar_extension.html)
 - `omni.sensors.nv.common` — GenericModelOutput format dependency
 - `omni.isaac.ros2_bridge` — ROS2 integration
 - `omni.isaac.sensor` — PhysX-based sensors (IMU, contact)
-- RTX Lidar extension — comparison data
+- `omni.sensors.nv.lidar` — RTX Lidar extension
+
+### 0.5 Previous Approach — Native Install **[DEPRECATED]**
+
+> Replaced by Docker on 2026-02-23. Native install (Omniverse Launcher + host ROS2 Jazzy) had driver version conflicts between Isaac Sim 5.x (requires 580+) and the host system (535.288). Docker isolates this cleanly. Host ROS2 Jazzy install retained for local debugging.
 
 ---
 
 ## Phase 1 — Urban Environment Creation
 
-Isaac Sim 4.5 ships with **no built-in city/urban outdoor environments**. The bundled environments are indoor only (warehouse, hospital, office, simple rooms). We must build or source an urban scene.
+Isaac Sim ships with **no built-in city/urban outdoor environments**. The bundled environments are indoor only (warehouse, hospital, office, simple rooms). We must build or source an urban scene.
 
 ### 1.1 Option A — Assemble from Omniverse/Third-Party Assets **[CHOSEN]**
 
@@ -100,7 +128,7 @@ Isaac Sim 4.5 ships with **no built-in city/urban outdoor environments**. The bu
 
 ### 2.1 Select or Build a Robot
 
-- **Bundled option**: [Idealworks iw.hub](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/assets/usd_assets_robots.html) (`Robots/Idealworks/iw_hub_sensors.usd`) — mobile base with LiDAR and cameras pre-configured
+- **Bundled option**: [Idealworks iw.hub](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/assets/usd_assets_robots.html) (`Robots/Idealworks/iw_hub_sensors.usd`) — mobile base with LiDAR and cameras pre-configured
 - **Custom option**: Import your own robot URDF/USD following [this workflow](https://manavthakkar.github.io/blog/taking-your-custom-mobile-robot-from-cad-to-isaac-sim) — define collision meshes, joints, drive controllers
 
 ### 2.2 Sensor Suite
@@ -146,37 +174,44 @@ Isaac Sim 4.5 ships with **no built-in city/urban outdoor environments**. The bu
 The radar extension outputs via the **TranscoderRadar** OmniGraph node (`omni.sensors.nv.radar.TranscoderRadar`), encoding detections into UDP packets in GenericModelOutput format:
 
 ```
-RTX Radar Sensor → GPU Compute → TranscoderRadar → UDP (port 10001)
+[isaac-sim container]
+RTX Radar Sensor → GPU Compute → TranscoderRadar → UDP multicast (239.0.0.1:10001)
+                                                          ↓ (host network)
+[ros2-bridge container]
+UDP listener → parse GenericModelOutput → ROS2 PointCloud2
 ```
 
 - Configure `remoteIP`, `remotePort`, `interfaceIP` on the TranscoderRadar node
 - Optionally write to binary file via the `fileName` attribute for offline analysis
 
-### 3.2 Radar-to-ROS2 Bridge (Custom — Required)
+### 3.2 Radar-to-ROS2 Bridge (Custom — Required) **[IMPLEMENTED]**
 
 The radar extension does **not** natively publish to ROS2 topics. A bridge node is required:
 
-**Approach 1 — UDP listener node**:
-1. Write a ROS2 node (Python or C++) that listens on the UDP socket (default `239.0.0.1:10001`)
-2. Parse the GenericModelOutput binary format (ref: `omni.sensors.nv.common` docs)
-3. Publish as `sensor_msgs/PointCloud2` (fields: x, y, z, velocity, RCS, SNR)
-4. Optionally publish a custom `RadarDetection` message for per-detection metadata
+**Approach 1 — UDP listener node [CHOSEN]**:
+1. ~~Write a~~ ROS2 node (Python) listens on the UDP socket (default `239.0.0.1:10001`)
+2. Parses the GenericModelOutput binary format (ref: `omni.sensors.nv.common` docs)
+3. Publishes as `sensor_msgs/PointCloud2` (fields: x, y, z, velocity, RCS, SNR)
+4. Configurable via YAML (port, frame_id, topic name)
 
-**Approach 2 — Isaac Sim Python scripting**:
+> Implementation: `ros2_ws/src/radar_bridge/` — unit tested (23/23 passing)
+
+**Approach 2 — Isaac Sim Python scripting [ALTERNATIVE]**:
 - Read radar output buffers directly via the Isaac Sim Python API and publish via `rclpy`
 
 ### 3.3 LiDAR Data Pipeline (Native ROS2 Support)
 
 LiDAR has native ROS2 support in Isaac Sim:
 - Use **Tools > Robotics > ROS2 OmniGraphs > RTX LiDAR** for automatic publishing
-- Publishes `sensor_msgs/PointCloud2` on `/point_cloud`
+- Publishes `sensor_msgs/PointCloud2` on `/lidar/point_cloud`
 - Publishes `sensor_msgs/LaserScan` if configured
+- Configured in `isaac_sim_scripts/launch_scene.py` via OmniGraph
 
 ### 3.4 Frame / TF Configuration
 
 - Publish TF tree: `map → odom → base_link → radar_link`, `base_link → lidar_link`, etc.
-- Use **Tools > Robotics > ROS2 OmniGraphs > TF Publisher**
-- Ensure radar and lidar frames are correctly offset to match physical mount positions
+- Static TF publishers in `launch/full_stack.launch.py`
+- Sensor mount offsets defined in `config/robot_sensors.yaml`
 
 ---
 
@@ -188,13 +223,14 @@ LiDAR has native ROS2 support in Isaac Sim:
 - **LiDAR point cloud**: Subscribe to lidar PointCloud2 topic
 - **Overlay both** in the same RViz2 session with different color maps for direct comparison
 - Add robot model (URDF) visualization, TF frames, camera image panels
+- Pre-configured layout: `rviz/radar_comparison.rviz`
 
 ### 4.2 Isaac Sim Viewport Visualization
 
 - Enable RTX Radar point cloud rendering in viewport (via OmniGraph if supported)
 - Enable RTX LiDAR viewport rendering for side-by-side comparison within the simulator
 
-### 4.3 Offline Analysis Pipeline
+### 4.3 Offline Analysis Pipeline **[IMPLEMENTED]**
 
 ```
 radar_analysis/
@@ -203,7 +239,6 @@ radar_analysis/
 ├── radar_pointcloud.py       # Convert radar detections → Open3D point clouds
 ├── lidar_pointcloud.py       # Convert lidar scans → Open3D point clouds
 ├── compare_clouds.py         # Registration, ICP alignment, density comparison
-├── radar_characteristics.py  # RCS analysis, detection probability vs range, velocity histograms
 └── visualize.py              # Matplotlib/Open3D 3D plots, heatmaps
 ```
 
@@ -266,6 +301,7 @@ radar_analysis/
 
 | Milestone | Deliverable | Status |
 |---|---|---|
+| **M0** | Docker infrastructure operational (both containers start, GPU works) | `TODO` |
 | **M1** | Isaac Sim running with urban scene, robot spawned and controllable | `TODO` |
 | **M2** | Radar + LiDAR sensors mounted and producing data | `TODO` |
 | **M3** | ROS2 bridge operational — radar & lidar point clouds visible in RViz2 | `TODO` |
@@ -282,9 +318,11 @@ radar_analysis/
 |---|---|
 | No built-in city USD scene | Start with a small assembled town block (Option A); scale up incrementally |
 | Radar GenericModelOutput format underdocumented | Inspect binary output with hex dump; reference `omni.sensors.nv.common` extension source |
-| Radar has no native ROS2 publisher | Build a custom UDP → ROS2 bridge node (Phase 3.2) |
+| Radar has no native ROS2 publisher | Custom UDP → ROS2 bridge node (implemented in Phase 3.2) |
 | GPU performance with large scene + multiple RTX sensors | Profile early; reduce scene complexity or sensor frame rates if needed |
 | Material assignments affect radar fidelity | Audit all scene materials before running radar experiments |
+| Isaac Sim 5.1 API differences from 4.5 | Review release notes; test scripts inside container before integration |
+| Docker GPU passthrough issues | Validate NVIDIA Container Toolkit setup early; test with simple CUDA container first |
 
 ---
 
@@ -295,16 +333,21 @@ All significant decisions are recorded here with date and rationale.
 | Date | Decision | Rationale | Alternatives Considered |
 |---|---|---|---|
 | 2026-02-13 | **Urban environment: Option A (Assemble from Omniverse/third-party assets)** | Best balance of control, realism, and time-to-first-result. No external tooling required beyond Isaac Sim's asset converter. | Option B (procedural generation via Blender), Option C (NVIDIA Smart City Blueprint) — both preserved as alternatives |
+| 2026-02-23 | **Docker multi-container deployment** | Reproducibility, portability to cloud compute, clean environment isolation. Avoids host driver version conflicts (Isaac Sim 5.x requires 580+ driver). | Native install via Omniverse Launcher (deprecated — driver conflicts) |
+| 2026-02-23 | **Isaac Sim 5.1.0** (upgrade from 4.5.0) | Latest GA release, best sensor and extension support. Docker makes driver requirements a non-issue. | 4.5.0 (compatible with current host driver but older), 6.0 (early preview, not GA) |
+| 2026-02-23 | **ROS2 Humble** (in containers, replaces Jazzy) | Native match for Ubuntu 22.04 in NVIDIA's container base image. LTS release. | Jazzy (requires Ubuntu 24.04, not supported in Isaac Sim containers) |
 
 ---
 
 ## References
 
-- [Isaac Sim 4.5 Radar Extension](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/sensors/omni_sensors_docs/radar_extension.html)
-- [Isaac Sim 4.5 Environment Assets](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/assets/usd_assets_environments.html)
-- [Isaac Sim 4.5 Robot Assets](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/assets/usd_assets_robots.html)
-- [Isaac Sim 4.5 PhysX Lidar](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/sensors/isaacsim_sensors_physx_lidar.html)
-- [RTX Lidar ROS2 Tutorial](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/ros2_tutorials/tutorial_ros2_rtx_lidar.html)
+- [Isaac Sim 5.1 Documentation](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/)
+- [Isaac Sim 5.1 Container Installation](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/install_container.html)
+- [Isaac Sim 5.1 Radar Extension](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/sensors/omni_sensors_docs/radar_extension.html)
+- [Isaac Sim 5.1 ROS2 Installation](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/install_ros.html)
+- [Isaac Sim NGC Container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/isaac-sim)
+- [Isaac Sim 5.1 Robot Assets](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/assets/usd_assets_robots.html)
+- [Isaac Sim 5.1 RTX Lidar](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/sensors/isaacsim_sensors_physx_lidar.html)
+- [RTX Lidar ROS2 Tutorial](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/ros2_tutorials/tutorial_ros2_rtx_lidar.html)
 - [Custom Mobile Robot in Isaac Sim](https://manavthakkar.github.io/blog/taking-your-custom-mobile-robot-from-cad-to-isaac-sim)
 - [NVIDIA Omniverse](https://www.nvidia.com/en-us/omniverse/)
-- [NVIDIA Smart City AI Blueprint](https://blogs.nvidia.com/blog/smart-city-ai-blueprint-europe/)
