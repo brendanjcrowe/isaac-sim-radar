@@ -1,0 +1,67 @@
+services:
+  isaac-sim:
+    build:
+      context: ..
+      dockerfile: docker/isaac-sim/Dockerfile
+    container_name: isaac-sim
+    network_mode: host
+    runtime: nvidia
+    environment:
+      - ACCEPT_EULA=Y
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      # Bind mounts for live development
+      - ../isaac_sim_scripts:/app/isaac_sim_scripts
+      - ../config:/app/config
+      # Named volumes for Isaac Sim caches
+      - isaac-sim-kit:/isaac-sim/kit/cache
+      - isaac-sim-ov:/root/.cache/ov
+      - isaac-sim-pip:/root/.cache/pip
+      - isaac-sim-glcache:/root/.cache/nvidia/GLCache
+      - isaac-sim-computecache:/root/.cache/nvidia/ComputeCache
+      - isaac-sim-logs:/root/.nvidia-omniverse/logs
+      - isaac-sim-data:/root/.local/share/ov/data
+    healthcheck:
+      test: ["CMD", "nvidia-smi"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+
+  ros2-bridge:
+    build:
+      context: ..
+      dockerfile: docker/ros2-bridge/Dockerfile
+    container_name: ros2-bridge
+    network_mode: host
+    depends_on:
+      isaac-sim:
+        condition: service_healthy
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - DISPLAY=${DISPLAY}
+    volumes:
+      # Bind mounts for live development
+      - ../ros2_ws/src:/app/ros2_ws/src
+      - ../radar_analysis:/app/radar_analysis
+      - ../launch:/app/launch
+      - ../rviz:/app/rviz
+      - ../config:/app/config
+      - ../tests:/app/tests
+      # X11 socket for RViz
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      # Output directories
+      - ../bags:/app/bags
+      - ../analysis_output:/app/analysis_output
+    restart: unless-stopped
+
+volumes:
+  isaac-sim-kit:
+  isaac-sim-ov:
+  isaac-sim-pip:
+  isaac-sim-glcache:
+  isaac-sim-computecache:
+  isaac-sim-logs:
+  isaac-sim-data:
