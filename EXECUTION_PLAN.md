@@ -1,94 +1,136 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Status**: In Progress
+> **Last Updated**: 2026-02-23
+> **Status**: In Progress — Pivoting to Docker
 
 ---
 
-## Step 1: Install Prerequisites
+## Architecture
 
-### 1a. Install Omniverse Launcher & Isaac Sim 4.5
-- [ ] Download Omniverse Launcher `.AppImage` from NVIDIA
-- [ ] Install Isaac Sim 4.5 through the Launcher
-- [ ] Verify launch and GPU detection
-- *Manual/GUI step*
+**Multi-container docker-compose setup:**
 
-### 1b. Install ROS2 Jazzy — DONE
-- [x] Installed `ros-jazzy-desktop` + rviz2, sensor-msgs, tf2-ros, slam-toolbox, colcon
-- [x] Initialized rosdep
-- [x] Verified: `source /opt/ros/jazzy/setup.bash`
+| Container | Base Image | Purpose |
+|---|---|---|
+| `isaac-sim` | `nvcr.io/nvidia/isaac-sim:5.1.0` (Ubuntu 22.04) | Headless Isaac Sim with radar/lidar sensors, scene loading |
+| `ros2-bridge` | Ubuntu 22.04 + ROS2 Humble | Radar UDP bridge, RViz2, TF publishers, analysis tools |
 
-### 1c. Install Python Dependencies — DONE
-- [x] Created conda environment `isaac-radar` (Python 3.12)
-- [x] Installed: numpy, open3d, matplotlib, pyyaml, scipy, pytest
+Communication: `--network host` for ROS2 DDS discovery + UDP radar data.
+GPU: NVIDIA Container Toolkit, GPU passed to `isaac-sim` container.
 
----
-
-## Step 2: Project Structure & ROS2 Workspace — DONE
-
-- [x] Created full directory tree
-- [x] Created `ros2_ws/src/radar_bridge/` ROS2 package (package.xml, setup.py, setup.cfg, resource marker)
-- [x] Created `isaac_sim_scripts/` directory
-- [x] Created `radar_analysis/` directory
-- [x] Created `config/`, `launch/`, `rviz/` directories
+### Version Choices
+- **Isaac Sim 5.1.0** — latest GA release (Oct 2025), best sensor support
+- **Ubuntu 22.04** — in containers, matches NVIDIA's base image
+- **ROS2 Humble** — LTS, native to Ubuntu 22.04, well-tested with Isaac Sim 5.x
+- **Driver**: 580.65.06+ required on host for Isaac Sim 5.x
 
 ---
 
-## Step 3: Environment Setup Script — DONE
+## Completed Work (Pre-Docker)
 
-- [x] `setup_env.sh` — installs ROS2 Jazzy, Python deps, builds workspace, prints Isaac Sim instructions
-- [x] `requirements.txt` — numpy, open3d, matplotlib, pyyaml
+These steps produced working code that carries forward into the Docker setup:
 
----
-
-## Step 4: Radar-to-ROS2 Bridge Node — DONE
-
-- [x] `radar_bridge/udp_listener.py` — UDP multicast socket, GenericModelOutput binary parser
-- [x] `radar_bridge/radar_to_ros2.py` — ROS2 node: UDP → PointCloud2 (`/radar/point_cloud`)
-- [x] `launch/radar_bridge.launch.py` — parameterized launch file
-- [x] `config/radar_bridge.yaml` — multicast group, port, frame_id, topic
+- [x] **Step 2**: Project structure & ROS2 workspace (`ros2_ws/src/radar_bridge/`)
+- [x] **Step 3**: Environment setup scripts (`setup_env.sh`, `requirements.txt`)
+- [x] **Step 4**: Radar-to-ROS2 bridge node (`udp_listener.py`, `radar_to_ros2.py`)
+- [x] **Step 5**: Isaac Sim scripts (`launch_scene.py`, `enable_extensions.py`, `robot_teleop.py`)
+- [x] **Step 6**: Config, launch, RViz & analysis files
+- [x] **Step 7**: Unit tests — 23/23 passing
+- [x] ROS2 Jazzy installed on host (useful for host-side debugging)
 
 ---
 
-## Step 5: Isaac Sim Scene Scripts — DONE
+## Step 8: Docker Infrastructure
 
-- [x] `isaac_sim_scripts/enable_extensions.py` — enable radar, lidar, ros2_bridge extensions
-- [x] `isaac_sim_scripts/launch_scene.py` — load stage, spawn robot, attach sensors, configure OmniGraph
-- [x] `isaac_sim_scripts/robot_teleop.py` — WASD keyboard teleop for differential drive
+### 8a. Host Prerequisites
+- [ ] Install NVIDIA Container Toolkit (`nvidia-ctk`)
+- [ ] Verify: `docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi`
+- [ ] Authenticate with NGC: `docker login nvcr.io` (requires NGC API key)
+- [ ] Upgrade GPU driver to 580+ if targeting remote compute with Isaac Sim 5.1
+
+### 8b. Isaac Sim Container (`docker/isaac-sim/`)
+- [ ] `Dockerfile` — extends `nvcr.io/nvidia/isaac-sim:5.1.0`
+  - Copy `isaac_sim_scripts/` and `config/` into container
+  - Install any additional Python deps
+  - Set entrypoint for headless operation
+- [ ] Verify: container starts, GPU detected, extensions load
+- [ ] Update `launch_scene.py` for Isaac Sim 5.1 API changes (if any)
+
+### 8c. ROS2 Bridge Container (`docker/ros2-bridge/`)
+- [ ] `Dockerfile` — Ubuntu 22.04 + ROS2 Humble
+  - Install `ros-humble-desktop`, sensor-msgs, tf2-ros, slam-toolbox
+  - Copy `ros2_ws/` and build with colcon
+  - Copy `radar_analysis/`, `launch/`, `rviz/`, `config/`
+  - Install Python deps (numpy, open3d, matplotlib, scipy)
+- [ ] Verify: `ros2 run radar_bridge radar_to_ros2` works inside container
+
+### 8d. Docker Compose (`docker-compose.yaml`)
+- [ ] Define `isaac-sim` service:
+  - `nvcr.io/nvidia/isaac-sim:5.1.0` base
+  - GPU runtime, `--network host`
+  - Volume mount for scene USD files and config
+  - Headless entrypoint
+- [ ] Define `ros2-bridge` service:
+  - Custom ROS2 Humble image
+  - `--network host` for DDS + UDP
+  - Volume mount for bags output and analysis results
+  - Display passthrough for RViz2 (`DISPLAY`, `/tmp/.X11-unix`)
+- [ ] Shared volumes: `config/`, `bags/`, scene assets
+- [ ] Convenience scripts: `docker/start.sh`, `docker/stop.sh`
 
 ---
 
-## Step 6: Config, Launch, RViz & Analysis — DONE
+## Step 9: Update Code for Isaac Sim 5.1
 
-- [x] `config/radar_params.yaml` — WpmDmatApproxRadar parameters
-- [x] `config/lidar_params.yaml` — OS1_64 LiDAR config
-- [x] `config/robot_sensors.yaml` — TF frame tree with mount transforms
-- [x] `launch/full_stack.launch.py` — master launch (bridge + TF + RViz2)
-- [x] `rviz/radar_comparison.rviz` — radar (red) + LiDAR (green) side-by-side
-- [x] `radar_analysis/parse_radar_udp.py` — standalone UDP capture tool
-- [x] `radar_analysis/radar_pointcloud.py` — detections → Open3D point cloud
-- [x] `radar_analysis/lidar_pointcloud.py` — LiDAR PCD loading + conversion
-- [x] `radar_analysis/compare_clouds.py` — nearest-neighbor distance, coverage metrics
-- [x] `radar_analysis/visualize.py` — BEV plots, histograms, RCS scatter
-- [x] `radar_analysis/record_bags.py` — ROS2 bag recording wrapper
+- [ ] Review Isaac Sim 5.1 API changes vs 4.5 (sensor creation, OmniGraph nodes)
+- [ ] Update `launch_scene.py` for any breaking changes
+- [ ] Update `enable_extensions.py` extension names if changed
+- [ ] Update `radar_params.yaml` if WpmDmatApproxRadar config format changed
+- [ ] Re-test with containerized Isaac Sim
 
 ---
 
-## Step 7: Unit Tests — DONE
+## Step 10: Integration Testing
 
-- [x] `tests/test_udp_listener.py` — 10 tests: packet parsing, struct sizes, truncation handling, UDP send/receive
-- [x] `tests/test_analysis.py` — 9 tests: distance metrics, coverage ratio, Open3D point cloud creation
-- [x] `tests/test_config.py` — 4 tests: all YAML configs load with correct structure/values
-- [x] All 23 tests passing (conda env `isaac-radar`, pytest)
-
----
-
-## Verification Checklist
-
-- [x] Unit tests pass: `conda activate isaac-radar && pytest tests/ -v` → 23/23 passed
-- [x] ROS2 Jazzy installed, `colcon build --symlink-install` → `radar_bridge` built cleanly
-- [x] `ros2 run radar_bridge radar_to_ros2` → node starts, listens on `239.0.0.1:10001`
-- [ ] Send mock UDP data → see PointCloud2 messages on `/radar/point_cloud`
-- [ ] Open Isaac Sim → run `launch_scene.py` → scene loads, robot spawns, sensors active
+- [ ] `docker compose up` → both containers start cleanly
+- [ ] Isaac Sim loads scene, sensors active, radar emitting UDP
+- [ ] ROS2 bridge receives UDP, publishes PointCloud2 on `/radar/point_cloud`
 - [ ] `ros2 topic list` shows radar and lidar topics
-- [ ] RViz2 displays both point clouds
+- [ ] RViz2 displays both point clouds side-by-side
+- [ ] Record a test bag file via `radar_analysis/record_bags.py`
+
+---
+
+## Remaining Project Milestones (from PROJECT_PLAN.md)
+
+- [ ] **M1**: Urban scene + controllable robot with sensors
+- [ ] **M2**: Radar data visible in RViz2
+- [ ] **M3**: LiDAR data visible, side-by-side with radar
+- [ ] **M4**: Recorded bags, offline comparison metrics
+- [ ] **M5**: Analysis report (coverage, accuracy, detection density)
+- [ ] **M6**: Material-aware radar tuning
+- [ ] **M7**: Final documentation and reproducibility
+
+---
+
+## File Structure (Docker additions)
+
+```
+isaac-sim-radar/
+├── docker/
+│   ├── docker-compose.yaml
+│   ├── isaac-sim/
+│   │   └── Dockerfile
+│   ├── ros2-bridge/
+│   │   └── Dockerfile
+│   ├── start.sh
+│   └── stop.sh
+├── ros2_ws/                    # (existing — mounted into ros2-bridge)
+├── isaac_sim_scripts/          # (existing — mounted into isaac-sim)
+├── config/                     # (existing — shared volume)
+├── radar_analysis/             # (existing — in ros2-bridge)
+├── launch/                     # (existing — in ros2-bridge)
+├── rviz/                       # (existing — in ros2-bridge)
+├── tests/                      # (existing — run in ros2-bridge or host)
+└── ...
+```
