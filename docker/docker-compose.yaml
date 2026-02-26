@@ -55,6 +55,12 @@ services:
       # Output directories
       - ../bags:/app/bags
       - ../analysis_output:/app/analysis_output
+    healthcheck:
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && ros2 pkg list | grep -q radar_bridge"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
 volumes:

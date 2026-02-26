@@ -48,56 +48,46 @@ These steps produced working code that carries forward into the Docker setup:
 - [ ] Authenticate with NGC: `docker login nvcr.io` (requires NGC API key)
 - [ ] Upgrade GPU driver to 580+ if targeting remote compute with Isaac Sim 5.1
 
-### 8b. Isaac Sim Container (`docker/isaac-sim/`)
-- [ ] `Dockerfile` — extends `nvcr.io/nvidia/isaac-sim:5.1.0`
-  - Copy `isaac_sim_scripts/` and `config/` into container
-  - Install any additional Python deps
-  - Set entrypoint for headless operation
-- [ ] Verify: container starts, GPU detected, extensions load
-- [ ] Update `launch_scene.py` for Isaac Sim 5.1 API changes (if any)
+### 8b. Isaac Sim Container (`docker/isaac-sim/`) ✅
+- [x] `Dockerfile` — extends `nvcr.io/nvidia/isaac-sim:5.1.0`, pyyaml installed, entrypoint set
+- [x] `entrypoint.sh` — headless by default, passthrough args for one-off commands
 
-### 8c. ROS2 Bridge Container (`docker/ros2-bridge/`)
-- [ ] `Dockerfile` — Ubuntu 22.04 + ROS2 Humble
-  - Install `ros-humble-desktop`, sensor-msgs, tf2-ros, slam-toolbox
-  - Copy `ros2_ws/` and build with colcon
-  - Copy `radar_analysis/`, `launch/`, `rviz/`, `config/`
-  - Install Python deps (numpy, open3d, matplotlib, scipy)
-- [ ] Verify: `ros2 run radar_bridge radar_to_ros2` works inside container
+### 8c. ROS2 Bridge Container (`docker/ros2-bridge/`) ✅
+- [x] `Dockerfile` — `osrf/ros:humble-desktop`, tf2-ros, slam-toolbox, colcon build at image build time
+- [x] `entrypoint.sh` — sources ROS2, rebuilds on bind-mount changes, sources overlay
 
-### 8d. Docker Compose (`docker-compose.yaml`)
-- [ ] Define `isaac-sim` service:
-  - `nvcr.io/nvidia/isaac-sim:5.1.0` base
-  - GPU runtime, `--network host`
-  - Volume mount for scene USD files and config
-  - Headless entrypoint
-- [ ] Define `ros2-bridge` service:
-  - Custom ROS2 Humble image
-  - `--network host` for DDS + UDP
-  - Volume mount for bags output and analysis results
-  - Display passthrough for RViz2 (`DISPLAY`, `/tmp/.X11-unix`)
-- [ ] Shared volumes: `config/`, `bags/`, scene assets
-- [ ] Convenience scripts: `docker/start.sh`, `docker/stop.sh`
+### 8d. Docker Compose + Scripts ✅
+- [x] `docker/docker-compose.yaml` — both services, host networking, GPU runtime, 7 named cache volumes, healthchecks
+- [x] `docker/start.sh` — pre-flight checks (GPU, NGC, X11), `docker compose up --build -d`
+- [x] `docker/stop.sh` — `docker compose down`, revoke X11, `--clean` removes volumes
+- [x] `docker/.env` — defaults for ROS_DOMAIN_ID, COMPOSE_PROJECT_NAME
 
 ---
 
-## Step 9: Update Code for Isaac Sim 5.1
+## Step 9: Update Code for Isaac Sim 5.1 ✅
 
-- [ ] Review Isaac Sim 5.1 API changes vs 4.5 (sensor creation, OmniGraph nodes)
-- [ ] Update `launch_scene.py` for any breaking changes
-- [ ] Update `enable_extensions.py` extension names if changed
-- [ ] Update `radar_params.yaml` if WpmDmatApproxRadar config format changed
-- [ ] Re-test with containerized Isaac Sim
+- [x] Reviewed Isaac Sim 5.1 API changes vs 4.5 — extension renames, OmniGraph node type strings
+- [x] Updated `launch_scene.py` — Nucleus path `4.5→5.1`, node types `isaacsim.*`, defensive radar attr loop
+- [x] Updated `enable_extensions.py` — `omni.isaac.ros2_bridge→isaacsim.ros2.bridge`, `omni.isaac.sensor→isaacsim.sensors.rtx`
+- [x] Updated `radar_params.yaml` — comment updated to 5.1, OmniRadar prim note added
+- [ ] Re-test with containerized Isaac Sim (requires NGC auth + GPU)
 
 ---
 
 ## Step 10: Integration Testing
 
-- [ ] `docker compose up` → both containers start cleanly
-- [ ] Isaac Sim loads scene, sensors active, radar emitting UDP
-- [ ] ROS2 bridge receives UDP, publishes PointCloud2 on `/radar/point_cloud`
-- [ ] `ros2 topic list` shows radar and lidar topics
+### 10a. Pre-container testing ✅
+- [x] `tests/test_integration.py` — 8 tests: full UDP→parse→pack roundtrip, PointCloud2 field layout, zero-detection edge case
+- [x] `docker/test.sh` — post-start smoke test: GPU, pkg list, pytest, imports, node startup
+- [x] `docker/docker-compose.yaml` — ros2-bridge healthcheck added (ros2 pkg list gate)
+
+### 10b. Container runtime (requires NGC auth + GPU)
+- [ ] `docker/start.sh` → both containers healthy (`docker ps` shows `(healthy)`)
+- [ ] `docker/test.sh` → all 5 checks pass
+- [ ] Isaac Sim loads scene: `docker exec isaac-sim /isaac-sim/python.sh /app/isaac_sim_scripts/launch_scene.py`
+- [ ] Radar emitting UDP: `docker exec ros2-bridge ros2 topic list` shows `/radar/point_cloud`
 - [ ] RViz2 displays both point clouds side-by-side
-- [ ] Record a test bag file via `radar_analysis/record_bags.py`
+- [ ] Record test bag: `docker exec ros2-bridge python3 /app/radar_analysis/record_bags.py --duration 30`
 
 ---
 
