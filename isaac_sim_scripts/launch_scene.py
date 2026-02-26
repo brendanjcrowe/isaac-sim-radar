@@ -5,12 +5,13 @@ Run inside Isaac Sim's Script Editor or via:
 
 This script:
 1. Loads a base USD stage (or creates a ground plane)
-2. Spawns the robot (iw.hub or placeholder)
-3. Attaches RTX Radar sensor with WpmDmatApproxRadar config
-4. Attaches RTX Lidar sensor
-5. Enables ROS2 bridge extension
-6. Configures TranscoderRadar OmniGraph node for UDP output
-7. Sets up LiDAR → ROS2 OmniGraph publishing
+2. Creates a procedural urban environment (buildings, walls, pillars)
+3. Spawns the robot (iw.hub or placeholder)
+4. Attaches RTX Radar sensor with WpmDmatApproxRadar config
+5. Attaches RTX Lidar sensor
+6. Enables ROS2 bridge extension
+7. Configures TranscoderRadar OmniGraph node for UDP output
+8. Sets up LiDAR → ROS2 OmniGraph publishing
 """
 
 import os
@@ -18,7 +19,7 @@ import yaml
 import carb
 import omni.usd
 import omni.kit.commands
-from pxr import Gf, Sdf, UsdGeom, UsdPhysics
+from pxr import Gf, Sdf, UsdGeom, UsdPhysics, UsdShade
 
 # Paths (adjust for your Isaac Sim installation)
 ISAAC_NUCLEUS = "omniverse://localhost/NVIDIA/Assets/Isaac/5.1"
@@ -37,6 +38,127 @@ def load_config(name: str) -> dict:
             return yaml.safe_load(f) or {}
     carb.log_warn(f"Config not found: {path}")
     return {}
+
+
+def _make_material(stage, prim_path: str, label: str, metallic: float) -> Sdf.Path:
+    """Create a simple OmniPBR material with a metallic value for radar reflectivity.
+
+    WpmDmatApproxRadar reads material metallic/roughness from the bound shader.
+    Concrete:  metallic≈0.0, roughness≈0.8  → low radar reflectivity
+    Metal:     metallic≈1.0, roughness≈0.2  → high radar reflectivity
+
+    For M6 (material tuning), replace with full MDL asset references from Nucleus.
+    """
+    mat_path = Sdf.Path(f"/World/Materials/{label}")
+    mat = UsdShade.Material.Define(stage, mat_path)
+    shader = UsdShade.Shader.Define(stage, mat_path.AppendChild("Shader"))
+    shader.CreateIdAttr("OmniPBR")
+    shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(metallic)
+    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0 - metallic * 0.6)
+    mat.CreateSurfaceOutput().ConnectToSource(
+        shader.ConnectableAPI(), "surface"
+    )
+    return mat_path
+
+
+def _bind_material(stage, prim_path: str, mat_path: Sdf.Path):
+    """Apply a material binding to the given prim."""
+    prim = stage.GetPrimAtPath(prim_path)
+    if prim.IsValid():
+        binding_api = UsdShade.MaterialBindingAPI.Apply(prim)
+        mat = UsdShade.Material(stage.GetPrimAtPath(mat_path))
+        binding_api.Bind(mat)
+
+
+def _add_collision(stage, prim_path: str):
+    """Apply UsdPhysics collision to the prim at prim_path."""
+    prim = stage.GetPrimAtPath(prim_path)
+    if prim.IsValid():
+        UsdPhysics.CollisionAPI.Apply(prim)
+
+
+def create_urban_environment(stage):
+    """Create a procedural urban block for radar detection testing.
+
+    All geometry is placed within the WpmDmatApproxRadar FOV (±75° azimuth, 100m max range).
+    Robot is at the origin facing +X.
+
+    Layout (approximate, all positions in meters):
+      Buildings (concrete, high radar cross-section at sharp corners):
+        A: x=20, y=10   — 12m wide, 8m deep, 15m tall
+        B: x=30, y=-8   — 15m wide, 10m deep, 10m tall
+        C: x=42, y=6    — 10m wide, 10m deep, 20m tall
+        D: x=45, y=-16  — 20m wide, 12m deep, 8m tall
+      Walls/barriers (concrete):
+        W1: x=10, y=0   — 10m long, 0.3m thick, 3m tall (road divider)
+        W2: x=12, y=-12 — 8m long,  0.3m thick, 2m tall (fence)
+      Pillars (metal, strong radar return):
+        P1: x=8,  y=-3
+        P2: x=9,  y=5
+        P3: x=7,  y=-6
+    """
+    # Create materials once
+    concrete_mat = _make_material(stage, "/World/Materials/Concrete", "Concrete", metallic=0.05)
+    metal_mat    = _make_material(stage, "/World/Materials/Metal",    "Metal",    metallic=0.95)
+
+    # ── Buildings ─────────────────────────────────────────────────────────────
+    buildings = [
+        ("/World/Urban/Building_A", (20.0,  10.0, 7.5),  (12.0, 8.0,  15.0)),
+        ("/World/Urban/Building_B", (30.0,  -8.0, 5.0),  (15.0, 10.0, 10.0)),
+        ("/World/Urban/Building_C", (42.0,   6.0, 10.0), (10.0, 10.0, 20.0)),
+        ("/World/Urban/Building_D", (45.0, -16.0, 4.0),  (20.0, 12.0, 8.0)),
+    ]
+    for path, (tx, ty, tz), (sx, sy, sz) in buildings:
+        omni.kit.commands.execute(
+            "CreatePrimCommand",
+            prim_type="Cube",
+            prim_path=path,
+            attributes={
+                "xformOp:translate": Gf.Vec3d(tx, ty, tz),
+                "xformOp:scale":     Gf.Vec3f(sx / 2, sy / 2, sz / 2),
+            },
+        )
+        _add_collision(stage, path)
+        _bind_material(stage, path, concrete_mat)
+
+    # ── Walls / barriers ──────────────────────────────────────────────────────
+    walls = [
+        ("/World/Urban/Wall_1", (10.0,  0.0, 1.5), (10.0, 0.3, 3.0)),
+        ("/World/Urban/Wall_2", (12.0, -12.0, 1.0), (8.0,  0.3, 2.0)),
+    ]
+    for path, (tx, ty, tz), (sx, sy, sz) in walls:
+        omni.kit.commands.execute(
+            "CreatePrimCommand",
+            prim_type="Cube",
+            prim_path=path,
+            attributes={
+                "xformOp:translate": Gf.Vec3d(tx, ty, tz),
+                "xformOp:scale":     Gf.Vec3f(sx / 2, sy / 2, sz / 2),
+            },
+        )
+        _add_collision(stage, path)
+        _bind_material(stage, path, concrete_mat)
+
+    # ── Metal pillars (strong radar return) ───────────────────────────────────
+    pillars = [
+        ("/World/Urban/Pillar_1", ( 8.0, -3.0, 2.0)),
+        ("/World/Urban/Pillar_2", ( 9.0,  5.0, 2.0)),
+        ("/World/Urban/Pillar_3", ( 7.0, -6.0, 2.0)),
+    ]
+    for path, (tx, ty, tz) in pillars:
+        omni.kit.commands.execute(
+            "CreatePrimCommand",
+            prim_type="Cylinder",
+            prim_path=path,
+            attributes={
+                "xformOp:translate": Gf.Vec3d(tx, ty, tz),
+                "xformOp:scale":     Gf.Vec3f(0.3, 0.3, 2.0),
+            },
+        )
+        _add_collision(stage, path)
+        _bind_material(stage, path, metal_mat)
+
+    carb.log_info("Urban environment created: 4 buildings, 2 walls, 3 pillars.")
 
 
 def create_ground_plane(stage):
@@ -258,6 +380,7 @@ def main():
 
     # Build the scene
     create_ground_plane(stage)
+    create_urban_environment(stage)
     robot_path = spawn_robot(stage)
     radar_path = attach_radar_sensor(stage, robot_path)
     lidar_path = attach_lidar_sensor(stage, robot_path)

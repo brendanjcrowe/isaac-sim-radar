@@ -5,11 +5,12 @@ Can run independently of ROS2 to capture and inspect radar data:
 """
 
 import argparse
+import os
 import sys
 import time
 
-# Add parent so we can import from the radar_bridge package
-sys.path.insert(0, "../ros2_ws/src/radar_bridge")
+# Add parent so we can import from the radar_bridge package (works from any CWD)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ros2_ws", "src", "radar_bridge"))
 
 from radar_bridge.udp_listener import (
     create_multicast_socket,
