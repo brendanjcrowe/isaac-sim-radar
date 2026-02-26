@@ -21,7 +21,7 @@ import omni.kit.commands
 from pxr import Gf, Sdf, UsdGeom, UsdPhysics
 
 # Paths (adjust for your Isaac Sim installation)
-ISAAC_NUCLEUS = "omniverse://localhost/NVIDIA/Assets/Isaac/4.5"
+ISAAC_NUCLEUS = "omniverse://localhost/NVIDIA/Assets/Isaac/5.1"
 ROBOT_USD = f"{ISAAC_NUCLEUS}/Isaac/Robots/Idealworks/iw_hub_sensors.usd"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -99,9 +99,17 @@ def attach_radar_sensor(stage, parent_path: str):
         carb.log_error("Failed to create RTX Radar sensor")
         return None
 
-    # Set radar model to WpmDmatApproxRadar
-    if radar_prim.HasAttribute("rtxsensor:modelConfig"):
-        radar_prim.GetAttribute("rtxsensor:modelConfig").Set("WpmDmatApproxRadar")
+    # Set radar model to WpmDmatApproxRadar.
+    # In Isaac Sim 5.x, IsaacSensorCreateRtxRadar creates an OmniRadar prim
+    # (not a Camera prim). The model config attribute is the same but guarded
+    # defensively — WpmDmatApprox is the default model so this is a no-op if
+    # the attribute is absent.
+    for attr_name in ("rtxsensor:modelConfig", "omni:sensor:config"):
+        if radar_prim.HasAttribute(attr_name):
+            radar_prim.GetAttribute(attr_name).Set("WpmDmatApproxRadar")
+            break
+    else:
+        carb.log_info("Radar model attribute not found; using sensor default (WpmDmatApprox).")
 
     # Apply mount offset from config
     mount = radar_config.get("mount_offset", {})
@@ -164,7 +172,7 @@ def setup_radar_udp_output(stage, radar_path: str):
             {
                 keys.CREATE_NODES: [
                     ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
-                    ("RenderProduct", "omni.isaac.core_nodes.IsaacCreateRenderProduct"),
+                    ("RenderProduct", "isaacsim.core.nodes.IsaacCreateRenderProduct"),
                     ("TranscoderRadar", "omni.sensors.nv.radar.TranscoderRadar"),
                 ],
                 keys.CONNECT: [
@@ -206,8 +214,8 @@ def setup_lidar_ros2_publisher(stage, lidar_path: str):
             {
                 keys.CREATE_NODES: [
                     ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
-                    ("RenderProduct", "omni.isaac.core_nodes.IsaacCreateRenderProduct"),
-                    ("ROS2Publisher", "omni.isaac.ros2_bridge.ROS2RtxLidarHelper"),
+                    ("RenderProduct", "isaacsim.core.nodes.IsaacCreateRenderProduct"),
+                    ("ROS2Publisher", "isaacsim.ros2.bridge.ROS2RtxLidarHelper"),
                 ],
                 keys.CONNECT: [
                     ("OnPlaybackTick.outputs:tick", "RenderProduct.inputs:execIn"),

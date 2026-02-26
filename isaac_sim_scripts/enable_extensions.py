@@ -7,11 +7,11 @@ Run this inside Isaac Sim's Script Editor or via the --exec flag:
 import omni.kit.app
 
 REQUIRED_EXTENSIONS = [
-    "omni.sensors.nv.radar",
-    "omni.sensors.nv.common",
-    "omni.isaac.ros2_bridge",
-    "omni.isaac.sensor",
-    "omni.sensors.nv.lidar",
+    "omni.sensors.nv.radar",       # Omniverse-layer, unchanged in 5.x
+    "omni.sensors.nv.common",      # Omniverse-layer, unchanged in 5.x
+    "isaacsim.ros2.bridge",        # was omni.isaac.ros2_bridge (renamed in 4.5, removed in 5.0)
+    "isaacsim.sensors.rtx",        # was omni.isaac.sensor (renamed in 4.5, removed in 5.0)
+    "omni.sensors.nv.lidar",       # Omniverse-layer, unchanged in 5.x
 ]
 
 
