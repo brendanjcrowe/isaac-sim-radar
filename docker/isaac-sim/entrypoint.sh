@@ -5,4 +5,4 @@ if [ $# -gt 0 ]; then
     exec "$@"
 fi
 
-exec ./runheadless.native.sh -v
+exec /isaac-sim/python.sh /app/isaac_sim_scripts/run_headless.py

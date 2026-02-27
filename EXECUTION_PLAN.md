@@ -106,24 +106,24 @@ These steps produced working code that carries forward into the Docker setup:
 
 ---
 
-## Step 12: Headless Simulation Runner
+## Step 12: Headless Simulation Runner ✅
 
-### 12a. `isaac_sim_scripts/run_headless.py` (planned — not yet implemented)
-- [ ] `SimulationApp`-first entry point: boots Isaac Sim headless, calls `enable_extensions`, calls `create_urban_environment` + sensor setup from `launch_scene.py`
-- [ ] Timeline play + update loop (`while app.is_running()`)
-- [ ] SIGINT/SIGTERM handler → clean `app.close()`
-- [ ] CLI: `--duration N` (0 = run until signal), `--no-ros2` (skip LiDAR publisher)
-- [ ] Status log every 100 frames: `[frame N | T.Ts | radar_ok | lidar_ok]`
+### 12a. `isaac_sim_scripts/run_headless.py` ✅
+- [x] `SimulationApp`-first entry point: boots Isaac Sim headless, calls `enable_extensions`, calls `create_urban_environment` + sensor setup from `launch_scene.py`
+- [x] Timeline play + update loop (`while app.is_running()`)
+- [x] SIGINT/SIGTERM handler → clean `app.close()`
+- [x] CLI: `--duration N` (0 = run until signal), `--no-ros2` (skip LiDAR publisher)
+- [x] Status log every 100 frames: `[frame N | T.Ts | radar_ok | lidar_ok]`
 
-### 12b. `docker/isaac-sim/entrypoint.sh` (planned — not yet implemented)
-- [ ] Change default command from `runheadless.native.sh` to `run_headless.py`
-  - This makes `docker compose up` automatically load the scene on start
+### 12b. `docker/isaac-sim/entrypoint.sh` ✅
+- [x] Changed default command from `runheadless.native.sh` to `run_headless.py`
+  - `docker compose up` now automatically loads the scene on container start
 
 ---
 
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
 
-- [~] **M1**: Urban scene geometry complete in code; runtime verification pending (Step 10b + 12)
+- [~] **M1**: Urban scene geometry + headless runner complete in code; runtime verification pending (Step 10b)
 - [ ] **M2**: Radar data visible in RViz2
 - [ ] **M3**: LiDAR data visible, side-by-side with radar
 - [ ] **M4**: Recorded bags, offline comparison metrics
