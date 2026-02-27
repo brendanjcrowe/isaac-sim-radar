@@ -121,6 +121,38 @@ These steps produced working code that carries forward into the Docker setup:
 
 ---
 
+## Step 13: SLAM Toolbox + Nav2 Integration ✅
+
+### 13a. ROS2 bridge Dockerfile ✅
+- [x] Added `ros-humble-pointcloud-to-laserscan` — converts `/lidar/point_cloud` (PointCloud2) → `/scan` (LaserScan) needed by SLAM Toolbox
+- [x] Added `ros-humble-navigation2` + `ros-humble-nav2-bringup` for autonomous navigation
+
+### 13b. `config/slam_toolbox.yaml` ✅
+- [x] Online sync mapping mode; 5 cm resolution tuned for OS1-64 at urban scale
+- [x] `use_sim_time: true` throughout; Ceres solver; loop closure enabled
+- [x] Input: `/scan` (from pointcloud_to_laserscan)
+
+### 13c. `config/nav2_params.yaml` ✅
+- [x] DWB local planner (max 0.5 m/s), NavFn global planner, Spin/BackUp recoveries
+- [x] Global + local costmaps (5 cm resolution, 0.8 m inflation for urban buildings)
+- [x] AMCL config (for localization mode when loading a pre-built map)
+- [x] All nodes: `use_sim_time: true`
+
+### 13d. `launch/slam.launch.py` ✅
+- [x] `pointcloud_to_laserscan` node (horizontal slice ±0.5 m, 10 Hz, 720 rays/scan)
+- [x] `slam_toolbox sync_slam_toolbox_node` wired to `/scan`
+- [x] `use_sim_time` arg (default true)
+
+### 13e. `launch/nav2.launch.py` ✅
+- [x] controller_server, planner_server, recoveries_server, bt_navigator
+- [x] lifecycle_manager with autostart
+- [x] `params_file` arg for runtime override
+
+### 13f. `docker/test.sh` ✅
+- [x] Updated next-steps hints to reference `run_headless.py` entrypoint, SLAM, and Nav2 launches
+
+---
+
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
 
 - [~] **M1**: Urban scene geometry + headless runner complete in code; runtime verification pending (Step 10b)

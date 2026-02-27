@@ -1,0 +1,61 @@
+# SLAM Toolbox — online synchronous mapping for Isaac Sim urban scene
+# Tuned for Ouster OS1-64 LiDAR at 5 cm resolution.
+# Input: /scan (LaserScan, converted from /lidar/point_cloud via pointcloud_to_laserscan)
+
+slam_toolbox:
+  ros__parameters:
+
+    # ── Time ────────────────────────────────────────────────────────────────
+    # Isaac Sim publishes /clock; all nodes must use sim time.
+    use_sim_time: true
+
+    # ── Frames ──────────────────────────────────────────────────────────────
+    odom_frame:  odom
+    map_frame:   map
+    base_frame:  base_link
+    scan_topic:  /scan
+    map_name:    /map
+
+    # ── Mode ─────────────────────────────────────────────────────────────────
+    # online_sync: blocking scan processing, best accuracy for a single run.
+    # Switch to async for high-rate sensors if the robot drives fast.
+    mode: mapping
+
+    # ── Map resolution & update rate ─────────────────────────────────────────
+    resolution: 0.05          # 5 cm/cell — suited for urban-block scale (500m x 500m)
+    max_laser_range: 50.0     # OS1-64 effective range in simulation (m)
+    minimum_time_interval: 0.5  # min seconds between scan insertions (avoid redundant poses)
+    map_update_interval: 5.0  # seconds between writing the map to disk
+
+    # ── TF timing ────────────────────────────────────────────────────────────
+    transform_timeout:  0.2   # seconds; increase if sim runs slowly
+    tf_buffer_duration: 30.0  # keep a 30 s TF history for loop closure lookups
+
+    # ── Solver ───────────────────────────────────────────────────────────────
+    solver_plugin:           solver_plugins::CeresSolver
+    ceres_linear_solver:     SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner:    SCHUR_JACOBI
+    ceres_trust_strategy:    LEVENBERG_MARQUARDT
+    ceres_dogleg_type:       TRADITIONAL_DOGLEG
+    ceres_loss_function:     None
+
+    # ── Scan matching ─────────────────────────────────────────────────────────
+    use_scan_barycenter:        true
+    distance_variance_penalty:  0.5
+    angle_variance_penalty:     1.0
+    # Fine search
+    fine_search_angle_offset:   0.00349   # ~0.2 deg
+    # Coarse search
+    coarse_search_angle_offset: 0.349     # ~20 deg
+    coarse_angle_resolution:    0.0349    # ~2 deg
+    minimum_angle_penalty:      0.9
+    minimum_distance_penalty:   0.5
+
+    # ── Loop closure ─────────────────────────────────────────────────────────
+    do_loop_closing:                       true
+    loop_match_minimum_chain_size:         10
+    loop_match_maximum_variance_coeff:     3.0
+    loop_match_min_response_coarse:        0.35
+    loop_match_min_response_fine:          0.45
+    loop_search_maximum_distance:          4.0   # m; smaller → faster, fewer false positives
+    loop_search_space_dimension:           0.1

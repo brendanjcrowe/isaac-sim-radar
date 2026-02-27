@@ -5,6 +5,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-tf2-ros \
     ros-humble-slam-toolbox \
+    ros-humble-pointcloud-to-laserscan \
+    ros-humble-navigation2 \
+    ros-humble-nav2-bringup \
     python3-pip \
     python3-colcon-common-extensions \
     && rm -rf /var/lib/apt/lists/*
