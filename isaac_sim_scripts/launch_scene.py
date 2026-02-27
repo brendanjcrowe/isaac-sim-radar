@@ -363,6 +363,171 @@ def setup_lidar_ros2_publisher(stage, lidar_path: str):
         )
 
 
+# ── Scenario Variations ────────────────────────────────────────────────────
+
+_FOG_PRESETS = {
+    "light": {"start": 20.0, "end": 80.0},
+    "dense": {"start":  5.0, "end": 30.0},
+}
+
+_PEDESTRIAN_DEFS = [
+    {"path": "/World/Dynamic/Ped_0",
+     "start": (15.0,  4.0, 0.9), "end": (15.0, -4.0, 0.9)},
+    {"path": "/World/Dynamic/Ped_1",
+     "start": (25.0,  2.0, 0.9), "end": (35.0,  2.0, 0.9)},
+    {"path": "/World/Dynamic/Ped_2",
+     "start": ( 8.0, -2.0, 0.9), "end": ( 8.0,  2.0, 0.9)},
+]
+
+_VEHICLE_DEFS = [
+    {"path": "/World/Dynamic/Vehicle_0",
+     "start": (-5.0, -5.0, 0.75), "end": (60.0, -5.0, 0.75)},
+    {"path": "/World/Dynamic/Vehicle_1",
+     "start": (60.0,  8.0, 0.75), "end": (-5.0,  8.0, 0.75)},
+]
+
+
+def add_weather_effects(stage, weather_type: str = "fog", fog_preset: str = "light"):
+    """Add weather effects to the scene.
+
+    Args:
+        weather_type: "fog", "rain", or "clear".
+          fog  — enables RTX atmospheric fog (degrades LiDAR effective range;
+                 WpmDmatApproxRadar is unaffected by fog).
+          rain — scatters metallic spherical prims throughout the scene volume,
+                 simulating radar clutter from precipitation.
+          clear — no effect applied.
+        fog_preset: "light" or "dense" (only used when weather_type="fog").
+    """
+    if weather_type == "fog":
+        params = _FOG_PRESETS.get(fog_preset, _FOG_PRESETS["light"])
+        try:
+            import carb.settings
+            s = carb.settings.get_settings()
+            s.set("/rtx/fog/fogMode",      1)               # exponential
+            s.set("/rtx/fog/fogStartDist", params["start"])
+            s.set("/rtx/fog/fogEndDist",   params["end"])
+            s.set("/rtx/fog/fogColor",     [0.85, 0.85, 0.90, 1.0])
+            carb.log_info(
+                f"Weather: {fog_preset} fog — "
+                f"start={params['start']}m, end={params['end']}m"
+            )
+        except Exception as exc:
+            carb.log_warn(f"Could not apply fog settings ({exc}); continuing.")
+
+    elif weather_type == "rain":
+        import random
+        random.seed(42)
+        rain_mat = _make_material(stage, "", "RainClutter", metallic=0.9)
+        root = "/World/Weather/Rain"
+        count = 60
+        for i in range(count):
+            x = random.uniform( 0.0, 55.0)
+            y = random.uniform(-20.0, 20.0)
+            z = random.uniform( 0.3,  4.0)
+            path = f"{root}/drop_{i:03d}"
+            omni.kit.commands.execute(
+                "CreatePrimCommand",
+                prim_type="Sphere",
+                prim_path=path,
+                attributes={
+                    "xformOp:translate": Gf.Vec3d(x, y, z),
+                    "xformOp:scale":     Gf.Vec3f(0.04, 0.04, 0.04),
+                    "radius": 0.04,
+                },
+            )
+            _bind_material(stage, path, rain_mat)
+        carb.log_info(f"Weather: rain — {count} metallic clutter prims added.")
+
+    else:
+        carb.log_info("Weather: clear — no effects applied.")
+
+
+def add_dynamic_objects(
+    stage,
+    num_pedestrians: int = 2,
+    num_vehicles:    int = 1,
+    num_frames:      int = 600,
+):
+    """Add time-sampled animated dynamic objects to the scene.
+
+    Animation is baked into USD time samples so it plays automatically
+    as the timeline advances — no changes to the update loop required.
+
+    Pedestrians: vertical cylinders (~0.4 m dia, 1.8 m tall) that
+      oscillate back and forth along a linear path within the radar FOV.
+    Vehicles: car-sized boxes (4.4 m x 1.8 m x 1.5 m) that travel one-way
+      across the scene at constant speed.
+
+    Args:
+        num_pedestrians: number of pedestrian prims (max 3).
+        num_vehicles: number of vehicle prims (max 2).
+        num_frames: total animation frames to bake (default 600 = 10 s at 60 fps).
+    """
+    ped_mat = _make_material(stage, "", "PedBody", metallic=0.25)
+    car_mat = _make_material(stage, "", "CarBody",  metallic=0.85)
+
+    # ── Pedestrians: triangle-wave oscillation ────────────────────────────────
+    for cfg in _PEDESTRIAN_DEFS[:num_pedestrians]:
+        omni.kit.commands.execute(
+            "CreatePrimCommand",
+            prim_type="Cylinder",
+            prim_path=cfg["path"],
+            attributes={
+                "xformOp:translate": Gf.Vec3d(*cfg["start"]),
+                "xformOp:scale":     Gf.Vec3f(0.2, 0.2, 0.9),
+                "radius": 0.2,
+                "height": 1.8,
+            },
+        )
+        _bind_material(stage, cfg["path"], ped_mat)
+
+        prim = stage.GetPrimAtPath(cfg["path"])
+        if prim.IsValid():
+            xform = UsdGeom.Xformable(prim)
+            xform.ClearXformOpOrder()
+            op = xform.AddTranslateOp()
+            sx, sy, sz = cfg["start"]
+            ex, ey, ez = cfg["end"]
+            for frame in range(num_frames + 1):
+                phase = (frame / num_frames) * 2.0        # 0 → 2
+                alpha = phase if phase <= 1.0 else 2.0 - phase  # triangle wave
+                op.Set(
+                    Gf.Vec3d(sx + alpha * (ex - sx), sy + alpha * (ey - sy), sz),
+                    time=frame,
+                )
+
+    # ── Vehicles: linear one-way travel ──────────────────────────────────────
+    for cfg in _VEHICLE_DEFS[:num_vehicles]:
+        omni.kit.commands.execute(
+            "CreatePrimCommand",
+            prim_type="Cube",
+            prim_path=cfg["path"],
+            attributes={
+                "xformOp:translate": Gf.Vec3d(*cfg["start"]),
+                "xformOp:scale":     Gf.Vec3f(2.2, 0.9, 0.75),
+            },
+        )
+        _bind_material(stage, cfg["path"], car_mat)
+        _add_collision(stage, cfg["path"])
+
+        prim = stage.GetPrimAtPath(cfg["path"])
+        if prim.IsValid():
+            xform = UsdGeom.Xformable(prim)
+            xform.ClearXformOpOrder()
+            op = xform.AddTranslateOp()
+            sx, sy, sz = cfg["start"]
+            ex, ey, ez = cfg["end"]
+            for frame in range(num_frames + 1):
+                alpha = frame / num_frames
+                op.Set(Gf.Vec3d(sx + alpha * (ex - sx), sy, sz), time=frame)
+
+    carb.log_info(
+        f"Dynamic objects: {num_pedestrians} pedestrian(s), "
+        f"{num_vehicles} vehicle(s), {num_frames} animation frames baked."
+    )
+
+
 def main():
     """Main entry point — set up the full scene."""
     # Enable required extensions first

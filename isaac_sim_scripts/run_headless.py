@@ -45,6 +45,23 @@ parser.add_argument(
     action="store_true",
     help="Skip LiDAR ROS2 publisher. Use when testing without the ros2-bridge container.",
 )
+parser.add_argument(
+    "--weather",
+    choices=["clear", "fog", "rain"],
+    default="clear",
+    help="Weather preset (default: clear). fog degrades LiDAR; rain adds radar clutter.",
+)
+parser.add_argument(
+    "--fog-preset",
+    choices=["light", "dense"],
+    default="light",
+    help="Fog density preset, used only when --weather=fog (default: light).",
+)
+parser.add_argument(
+    "--dynamic-objects",
+    action="store_true",
+    help="Add animated pedestrians and vehicles with baked USD time-sample animation.",
+)
 args = parser.parse_args()
 
 # ── SimulationApp MUST be created before all omni.* imports ─────────────────
@@ -60,6 +77,8 @@ from pxr import UsdGeom  # noqa: E402
 
 from enable_extensions import enable_extensions  # noqa: E402
 from launch_scene import (  # noqa: E402
+    add_dynamic_objects,
+    add_weather_effects,
     attach_lidar_sensor,
     attach_radar_sensor,
     create_ground_plane,
@@ -105,6 +124,12 @@ if lidar_path and not args.no_ros2:
     setup_lidar_ros2_publisher(stage, lidar_path)
 elif args.no_ros2:
     carb.log_info("--no-ros2: skipping LiDAR ROS2 publisher")
+
+if args.weather != "clear":
+    add_weather_effects(stage, weather_type=args.weather, fog_preset=args.fog_preset)
+
+if args.dynamic_objects:
+    add_dynamic_objects(stage)
 
 # ── Start timeline ───────────────────────────────────────────────────────────
 timeline = omni.timeline.get_timeline_interface()

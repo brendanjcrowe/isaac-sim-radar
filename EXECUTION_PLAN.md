@@ -178,6 +178,35 @@ These steps produced working code that carries forward into the Docker setup:
 
 ---
 
+## Step 15: Scenario Variations ✅
+
+### 15a. `isaac_sim_scripts/launch_scene.py` ✅
+- [x] `add_weather_effects(stage, weather_type, fog_preset)`:
+  - `fog` — sets RTX fog settings via `carb.settings` (degrades LiDAR range; radar unaffected)
+  - `rain` — scatters 60 metallic sphere prims throughout the scene volume (creates radar clutter)
+  - `clear` — no-op
+- [x] `add_dynamic_objects(stage, num_pedestrians, num_vehicles, num_frames)`:
+  - Pedestrians: cylinders on triangle-wave oscillating paths, USD time-sampled animation baked for `num_frames`
+  - Vehicles: car-sized boxes on one-way linear paths, USD time-sampled animation baked
+  - Animation plays automatically as the timeline advances — no update-loop changes needed
+
+### 15b. `isaac_sim_scripts/run_headless.py` ✅
+- [x] `--weather {clear,fog,rain}` arg (default: clear)
+- [x] `--fog-preset {light,dense}` arg (default: light)
+- [x] `--dynamic-objects` flag
+- [x] Calls `add_weather_effects` and `add_dynamic_objects` after scene setup
+
+### 15c. Tests ✅
+- [x] `tests/test_scenario_variations.py` — 29 tests:
+  - Triangle-wave interpolation (monotone, symmetric, boundary values)
+  - Pedestrian/vehicle position bounds and path correctness
+  - Fog preset table structure and ordering
+  - CLI argparse: all new flags, invalid value rejection, combined flags
+
+**Test count: 98/100 passing (2 pre-existing open3d import skips)**
+
+---
+
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
 
 - [~] **M1**: Urban scene geometry + headless runner complete in code; runtime verification pending (Step 10b)
