@@ -2,7 +2,7 @@
 
 > **Status**: Active / Living Document
 > **Created**: 2026-02-13
-> **Last Updated**: 2026-02-23
+> **Last Updated**: 2026-02-27
 > **Isaac Sim Version**: 5.1.0
 > **Deployment**: Docker (multi-container)
 
@@ -61,11 +61,11 @@ Build a realistic city/town environment in NVIDIA Isaac Sim 5.1 to simulate a mo
 
 Extensions are enabled programmatically via `isaac_sim_scripts/enable_extensions.py` inside the `isaac-sim` container:
 
-- `omni.sensors.nv.radar` — [Radar Extension](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/sensors/omni_sensors_docs/radar_extension.html)
-- `omni.sensors.nv.common` — GenericModelOutput format dependency
-- `omni.isaac.ros2_bridge` — ROS2 integration
-- `omni.isaac.sensor` — PhysX-based sensors (IMU, contact)
-- `omni.sensors.nv.lidar` — RTX Lidar extension
+- `omni.sensors.nv.radar` — [Radar Extension](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/sensors/omni_sensors_docs/radar_extension.html) (Omniverse layer — unchanged in 5.x)
+- `omni.sensors.nv.common` — GenericModelOutput format dependency (Omniverse layer — unchanged in 5.x)
+- `isaacsim.ros2.bridge` — ROS2 integration (was `omni.isaac.ros2_bridge` in 4.5 — renamed in 5.x)
+- `isaacsim.sensors.rtx` — RTX-based sensors (was `omni.isaac.sensor` in 4.5 — renamed in 5.x)
+- `omni.sensors.nv.lidar` — RTX Lidar extension (Omniverse layer — unchanged in 5.x)
 
 ### 0.5 Previous Approach — Native Install **[DEPRECATED]**
 
@@ -194,7 +194,7 @@ The radar extension does **not** natively publish to ROS2 topics. A bridge node 
 3. Publishes as `sensor_msgs/PointCloud2` (fields: x, y, z, velocity, RCS, SNR)
 4. Configurable via YAML (port, frame_id, topic name)
 
-> Implementation: `ros2_ws/src/radar_bridge/` — unit tested (23/23 passing)
+> Implementation: `ros2_ws/src/radar_bridge/` — unit tested (38/40 passing; 2 open3d import skips)
 
 **Approach 2 — Isaac Sim Python scripting [ALTERNATIVE]**:
 - Read radar output buffers directly via the Isaac Sim Python API and publish via `rclpy`
@@ -301,11 +301,11 @@ radar_analysis/
 
 | Milestone | Deliverable | Status |
 |---|---|---|
-| **M0** | Docker infrastructure operational (both containers start, GPU works) | `TODO` |
-| **M1** | Isaac Sim running with urban scene, robot spawned and controllable | `TODO` |
-| **M2** | Radar + LiDAR sensors mounted and producing data | `TODO` |
+| **M0** | Docker infrastructure operational (both containers start, GPU works) | `CODE COMPLETE` — awaiting NGC auth + GPU for runtime verification |
+| **M1** | Isaac Sim running with urban scene, robot spawned and controllable | `CODE COMPLETE` — scene geometry + sensors implemented; runtime pending Step 12 headless runner |
+| **M2** | Radar + LiDAR sensors mounted and producing data | `TODO` — requires Step 10b (container runtime) |
 | **M3** | ROS2 bridge operational — radar & lidar point clouds visible in RViz2 | `TODO` |
-| **M4** | Offline analysis scripts producing comparison plots | `TODO` |
+| **M4** | Offline analysis scripts producing comparison plots | `CODE COMPLETE` — `run_analysis.py` tested with synthetic data; awaiting real bag files |
 | **M5** | LiDAR SLAM map generated, radar map generated, comparison complete | `TODO` |
 | **M6** | Sensor fusion pipeline operational | `TODO` |
 | **M7** | Scenario variations tested, results documented | `TODO` |
@@ -336,6 +336,7 @@ All significant decisions are recorded here with date and rationale.
 | 2026-02-23 | **Docker multi-container deployment** | Reproducibility, portability to cloud compute, clean environment isolation. Avoids host driver version conflicts (Isaac Sim 5.x requires 580+ driver). | Native install via Omniverse Launcher (deprecated — driver conflicts) |
 | 2026-02-23 | **Isaac Sim 5.1.0** (upgrade from 4.5.0) | Latest GA release, best sensor and extension support. Docker makes driver requirements a non-issue. | 4.5.0 (compatible with current host driver but older), 6.0 (early preview, not GA) |
 | 2026-02-23 | **ROS2 Humble** (in containers, replaces Jazzy) | Native match for Ubuntu 22.04 in NVIDIA's container base image. LTS release. | Jazzy (requires Ubuntu 24.04, not supported in Isaac Sim containers) |
+| 2026-02-27 | **Isaac Sim 5.1 extension name migration** | `omni.isaac.ros2_bridge` → `isaacsim.ros2.bridge`; `omni.isaac.sensor` → `isaacsim.sensors.rtx`; OmniGraph node type strings follow same pattern. `omni.sensors.nv.*` unchanged (Omniverse layer). OmniRadar prim replaces Camera-based radar prim in 5.x. | N/A — breaking change mandated by NVIDIA |
 
 ---
 

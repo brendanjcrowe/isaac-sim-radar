@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-02-23
-> **Status**: In Progress — Pivoting to Docker
+> **Last Updated**: 2026-02-27
+> **Status**: In Progress — Infrastructure complete; awaiting NGC auth + GPU for runtime verification
 
 ---
 
@@ -35,7 +35,7 @@ These steps produced working code that carries forward into the Docker setup:
 - [x] **Step 4**: Radar-to-ROS2 bridge node (`udp_listener.py`, `radar_to_ros2.py`)
 - [x] **Step 5**: Isaac Sim scripts (`launch_scene.py`, `enable_extensions.py`, `robot_teleop.py`)
 - [x] **Step 6**: Config, launch, RViz & analysis files
-- [x] **Step 7**: Unit tests — 23/23 passing
+- [x] **Step 7**: Unit tests — 23/23 passing (now 38/40; 2 open3d-import skips)
 - [x] ROS2 Jazzy installed on host (useful for host-side debugging)
 
 ---
@@ -84,16 +84,46 @@ These steps produced working code that carries forward into the Docker setup:
 ### 10b. Container runtime (requires NGC auth + GPU)
 - [ ] `docker/start.sh` → both containers healthy (`docker ps` shows `(healthy)`)
 - [ ] `docker/test.sh` → all 5 checks pass
-- [ ] Isaac Sim loads scene: `docker exec isaac-sim /isaac-sim/python.sh /app/isaac_sim_scripts/launch_scene.py`
+- [ ] Isaac Sim loads scene: `docker exec isaac-sim /isaac-sim/python.sh /app/isaac_sim_scripts/run_headless.py`
 - [ ] Radar emitting UDP: `docker exec ros2-bridge ros2 topic list` shows `/radar/point_cloud`
 - [ ] RViz2 displays both point clouds side-by-side
 - [ ] Record test bag: `docker exec ros2-bridge python3 /app/radar_analysis/record_bags.py --duration 30`
 
 ---
 
+## Step 11: Urban Scene + Offline Analysis Pipeline ✅
+
+### 11a. Urban scene geometry ✅
+- [x] `launch_scene.py` — `create_urban_environment(stage)` added: 4 concrete buildings, 2 walls, 3 metal pillars with material bindings and collision APIs
+
+### 11b. Offline analysis pipeline ✅
+- [x] `radar_analysis/run_analysis.py` — reads rosbag2 files via pure-Python `rosbags`, computes metrics, saves 4 plots + Markdown report
+- [x] `radar_analysis/parse_radar_udp.py` — fixed fragile relative `sys.path`
+- [x] `requirements.txt` — added `rosbags>=0.9`
+- [x] `tests/test_run_analysis.py` — 9 new tests (synthetic clouds, headless `Agg` backend)
+
+**Test count: 38/40 passing (2 open3d import skips)**
+
+---
+
+## Step 12: Headless Simulation Runner
+
+### 12a. `isaac_sim_scripts/run_headless.py` (planned — not yet implemented)
+- [ ] `SimulationApp`-first entry point: boots Isaac Sim headless, calls `enable_extensions`, calls `create_urban_environment` + sensor setup from `launch_scene.py`
+- [ ] Timeline play + update loop (`while app.is_running()`)
+- [ ] SIGINT/SIGTERM handler → clean `app.close()`
+- [ ] CLI: `--duration N` (0 = run until signal), `--no-ros2` (skip LiDAR publisher)
+- [ ] Status log every 100 frames: `[frame N | T.Ts | radar_ok | lidar_ok]`
+
+### 12b. `docker/isaac-sim/entrypoint.sh` (planned — not yet implemented)
+- [ ] Change default command from `runheadless.native.sh` to `run_headless.py`
+  - This makes `docker compose up` automatically load the scene on start
+
+---
+
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
 
-- [ ] **M1**: Urban scene + controllable robot with sensors
+- [~] **M1**: Urban scene geometry complete in code; runtime verification pending (Step 10b + 12)
 - [ ] **M2**: Radar data visible in RViz2
 - [ ] **M3**: LiDAR data visible, side-by-side with radar
 - [ ] **M4**: Recorded bags, offline comparison metrics
@@ -109,18 +139,39 @@ These steps produced working code that carries forward into the Docker setup:
 isaac-sim-radar/
 ├── docker/
 │   ├── docker-compose.yaml
-│   ├── isaac-sim/
-│   │   └── Dockerfile
-│   ├── ros2-bridge/
-│   │   └── Dockerfile
+│   ├── .env
 │   ├── start.sh
-│   └── stop.sh
-├── ros2_ws/                    # (existing — mounted into ros2-bridge)
-├── isaac_sim_scripts/          # (existing — mounted into isaac-sim)
-├── config/                     # (existing — shared volume)
-├── radar_analysis/             # (existing — in ros2-bridge)
-├── launch/                     # (existing — in ros2-bridge)
-├── rviz/                       # (existing — in ros2-bridge)
-├── tests/                      # (existing — run in ros2-bridge or host)
-└── ...
+│   ├── stop.sh
+│   ├── test.sh                 # post-start smoke test (5 checks)
+│   ├── isaac-sim/
+│   │   ├── Dockerfile
+│   │   └── entrypoint.sh
+│   └── ros2-bridge/
+│       ├── Dockerfile
+│       └── entrypoint.sh
+├── isaac_sim_scripts/          # mounted into isaac-sim container
+│   ├── launch_scene.py         # scene + sensors (urban environment added Step 11)
+│   ├── enable_extensions.py    # extension enable (updated for 5.1 in Step 9)
+│   ├── robot_teleop.py
+│   └── run_headless.py         # PLANNED Step 12 — SimulationApp boot + loop
+├── ros2_ws/                    # mounted into ros2-bridge
+│   └── src/radar_bridge/
+│       ├── udp_listener.py
+│       └── radar_to_ros2.py
+├── radar_analysis/
+│   ├── run_analysis.py         # NEW Step 11 — offline bag→metrics pipeline
+│   ├── parse_radar_udp.py      # (path fix Step 11)
+│   ├── compare_clouds.py
+│   ├── visualize.py
+│   ├── record_bags.py
+│   ├── radar_pointcloud.py
+│   └── lidar_pointcloud.py
+├── config/
+├── launch/
+├── rviz/
+├── tests/
+│   ├── test_unit.py            # 23 original unit tests
+│   ├── test_integration.py     # 8 tests added Step 10
+│   └── test_run_analysis.py    # 9 tests added Step 11
+└── requirements.txt            # rosbags>=0.9 added Step 11
 ```
