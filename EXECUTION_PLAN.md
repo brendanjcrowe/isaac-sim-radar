@@ -153,6 +153,31 @@ These steps produced working code that carries forward into the Docker setup:
 
 ---
 
+## Step 14: Radar Occupancy Map + Sensor Fusion ✅
+
+### 14a. `radar_analysis/radar_map.py` ✅
+- [x] `RadarOccupancyGrid` — 2D accumulation grid; configurable resolution, extents, RCS threshold
+- [x] `accumulate()` — transforms detections from sensor→odom frame via (x, y, yaw); returns count
+- [x] `save_map()` — writes PNG heat map + ROS PGM + ROS YAML (resolution, origin)
+- [x] `build_from_bag()` — reads rosbag2, syncs radar↔odom by nearest timestamp, builds and saves grid
+- [x] Standalone CLI: `python3 radar_map.py <bag> --out <dir>`
+
+### 14b. `radar_analysis/sensor_fusion.py` ✅
+- [x] `FusionFrame` dataclass — per-frame metrics: detection_ratio, coverage_complement_m, coverage_pct_covered, mean_radar_velocity
+- [x] `fuse_pair()` — vectorised 2D nearest-neighbour; configurable coverage threshold
+- [x] `save_metrics_csv()` — per-frame metrics CSV with nan handling
+- [x] `plot_fusion_summary()` — 3-panel matplotlib figure (ratio, complement distance, coverage %)
+- [x] `run_from_bag()` — syncs radar↔lidar by nearest timestamp (±100 ms), writes CSV + plot
+- [x] Standalone CLI: `python3 sensor_fusion.py <bag> --out <dir>`
+
+### 14c. Tests ✅
+- [x] `tests/test_radar_map.py` — 15 tests: grid shape, identity/translation/rotation transforms, RCS filtering, out-of-bounds, multi-frame accumulation, save file formats
+- [x] `tests/test_sensor_fusion.py` — 16 tests: identical/disjoint/empty clouds, detection ratio, velocity mean/abs, CSV output, nan handling, plot save
+
+**Test count: 69/71 passing (2 pre-existing open3d import skips)**
+
+---
+
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
 
 - [~] **M1**: Urban scene geometry + headless runner complete in code; runtime verification pending (Step 10b)
