@@ -11,7 +11,10 @@ if [ -d "$JAZZY_LIB" ]; then
 fi
 
 if [ $# -gt 0 ]; then
-    exec "$@"
+    # Run the provided command under Xvfb so that carb plugin initialization
+    # ordering is correct even for one-off commands (e.g. docker exec tests).
+    exec xvfb-run -a "$@"
 fi
 
-exec /isaac-sim/python.sh /app/isaac_sim_scripts/run_headless.py
+# Default: run the headless simulation under Xvfb.
+exec xvfb-run -a /isaac-sim/python.sh /app/isaac_sim_scripts/run_headless.py

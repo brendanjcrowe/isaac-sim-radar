@@ -242,11 +242,10 @@ not synthetic raycasts.
 
 **Chosen**: Xvfb (Option 1) — 3-line Dockerfile change, zero code changes to simulation scripts.
 
-### 16c. Xvfb Fix ⏳ (Step 16, in progress)
+### 16c. Xvfb Fix ✅ (code complete; runtime verification pending)
 
-- [ ] `docker/isaac-sim/Dockerfile` — add `xvfb` package
-- [ ] `docker/isaac-sim/entrypoint.sh` — wrap `python.sh` call with `xvfb-run -a`
-- [ ] `docker/docker-compose.yaml` — remove any `DISPLAY` env workarounds if present
+- [x] `docker/isaac-sim/Dockerfile` — add `xvfb` package via `apt-get`
+- [x] `docker/isaac-sim/entrypoint.sh` — wrap both default and passthrough commands with `xvfb-run -a`
 - [ ] Re-test: `docker run ... run_headless.py --no-ros2 --duration 30` — confirm no radar plugin crash
 - [ ] Verify radar UDP packets emitted: `docker exec ros2-bridge ros2 topic echo /radar/point_cloud`
 
