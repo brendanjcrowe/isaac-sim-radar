@@ -6,6 +6,10 @@ services:
     container_name: isaac-sim
     network_mode: host
     runtime: nvidia
+    # Run as root so the container can write to Docker-created volume mount points
+    # (Docker mounts named volumes as root:root; a non-root process can't create
+    # subdirectories in them, which breaks kit/DerivedDataCache → RTX renderer).
+    user: root
     environment:
       - ACCEPT_EULA=Y
       - NVIDIA_VISIBLE_DEVICES=all
@@ -14,7 +18,7 @@ services:
       # Bind mounts for live development
       - ../isaac_sim_scripts:/app/isaac_sim_scripts
       - ../config:/app/config
-      # Named volumes for Isaac Sim caches
+      # Named volumes for Isaac Sim caches (root paths because we run as root).
       - isaac-sim-kit:/isaac-sim/kit/cache
       - isaac-sim-ov:/root/.cache/ov
       - isaac-sim-pip:/root/.cache/pip

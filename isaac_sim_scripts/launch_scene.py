@@ -77,6 +77,25 @@ def _add_collision(stage, prim_path: str):
         UsdPhysics.CollisionAPI.Apply(prim)
 
 
+def _set_xform(stage, prim_path: str, translate=None, scale=None):
+    """Set translate and/or scale on a prim via UsdGeom.Xformable.
+
+    In Isaac Sim 5.1, xformOp attributes cannot be set through the
+    CreatePrimCommand ``attributes`` dict — they must be applied via the
+    Xformable API after the prim has been created.
+    """
+    prim = stage.GetPrimAtPath(prim_path)
+    if not prim.IsValid():
+        return
+    xform = UsdGeom.Xformable(prim)
+    xform.ClearXformOpOrder()
+    if translate is not None:
+        xform.AddTranslateOp().Set(Gf.Vec3d(*translate))
+    if scale is not None:
+        # PrecisionDouble matches the 'double3' attribute left by CreatePrimCommand
+        xform.AddScaleOp(UsdGeom.XformOp.PrecisionDouble).Set(Gf.Vec3d(*scale))
+
+
 def create_urban_environment(stage):
     """Create a procedural urban block for radar detection testing.
 
@@ -109,15 +128,8 @@ def create_urban_environment(stage):
         ("/World/Urban/Building_D", (45.0, -16.0, 4.0),  (20.0, 12.0, 8.0)),
     ]
     for path, (tx, ty, tz), (sx, sy, sz) in buildings:
-        omni.kit.commands.execute(
-            "CreatePrimCommand",
-            prim_type="Cube",
-            prim_path=path,
-            attributes={
-                "xformOp:translate": Gf.Vec3d(tx, ty, tz),
-                "xformOp:scale":     Gf.Vec3f(sx / 2, sy / 2, sz / 2),
-            },
-        )
+        omni.kit.commands.execute("CreatePrimCommand", prim_type="Cube", prim_path=path)
+        _set_xform(stage, path, translate=(tx, ty, tz), scale=(sx / 2, sy / 2, sz / 2))
         _add_collision(stage, path)
         _bind_material(stage, path, concrete_mat)
 
@@ -127,15 +139,8 @@ def create_urban_environment(stage):
         ("/World/Urban/Wall_2", (12.0, -12.0, 1.0), (8.0,  0.3, 2.0)),
     ]
     for path, (tx, ty, tz), (sx, sy, sz) in walls:
-        omni.kit.commands.execute(
-            "CreatePrimCommand",
-            prim_type="Cube",
-            prim_path=path,
-            attributes={
-                "xformOp:translate": Gf.Vec3d(tx, ty, tz),
-                "xformOp:scale":     Gf.Vec3f(sx / 2, sy / 2, sz / 2),
-            },
-        )
+        omni.kit.commands.execute("CreatePrimCommand", prim_type="Cube", prim_path=path)
+        _set_xform(stage, path, translate=(tx, ty, tz), scale=(sx / 2, sy / 2, sz / 2))
         _add_collision(stage, path)
         _bind_material(stage, path, concrete_mat)
 
@@ -146,15 +151,8 @@ def create_urban_environment(stage):
         ("/World/Urban/Pillar_3", ( 7.0, -6.0, 2.0)),
     ]
     for path, (tx, ty, tz) in pillars:
-        omni.kit.commands.execute(
-            "CreatePrimCommand",
-            prim_type="Cylinder",
-            prim_path=path,
-            attributes={
-                "xformOp:translate": Gf.Vec3d(tx, ty, tz),
-                "xformOp:scale":     Gf.Vec3f(0.3, 0.3, 2.0),
-            },
-        )
+        omni.kit.commands.execute("CreatePrimCommand", prim_type="Cylinder", prim_path=path)
+        _set_xform(stage, path, translate=(tx, ty, tz), scale=(0.3, 0.3, 2.0))
         _add_collision(stage, path)
         _bind_material(stage, path, metal_mat)
 
@@ -163,14 +161,8 @@ def create_urban_environment(stage):
 
 def create_ground_plane(stage):
     """Create a simple ground plane for testing."""
-    omni.kit.commands.execute(
-        "CreatePrimCommand",
-        prim_type="Plane",
-        prim_path="/World/GroundPlane",
-        attributes={
-            "xformOp:scale": Gf.Vec3f(100.0, 100.0, 1.0),
-        },
-    )
+    omni.kit.commands.execute("CreatePrimCommand", prim_type="Plane", prim_path="/World/GroundPlane")
+    _set_xform(stage, "/World/GroundPlane", scale=(100.0, 100.0, 1.0))
     # Add collision
     prim = stage.GetPrimAtPath("/World/GroundPlane")
     if prim.IsValid():
@@ -178,30 +170,47 @@ def create_ground_plane(stage):
 
 
 def spawn_robot(stage, robot_usd: str = ROBOT_USD):
-    """Reference the robot USD into the stage."""
+    """Reference the robot USD into the stage, falling back to a placeholder cube.
+
+    CreateReferenceCommand does not raise on unreachable Nucleus URLs — it silently
+    creates a prim with a dangling reference, which blocks sensor attachment later.
+    We pre-check with omni.client.stat() so the fallback triggers immediately.
+    """
     robot_path = "/World/Robot"
 
-    # Try loading from Nucleus; fall back to creating a placeholder
-    try:
-        omni.kit.commands.execute(
-            "CreateReferenceCommand",
-            usd_context=omni.usd.get_context(),
-            path_to=robot_path,
-            asset_path=robot_usd,
-        )
-        carb.log_info(f"Loaded robot from {robot_usd}")
-    except Exception as e:
-        carb.log_warn(f"Could not load robot USD ({e}). Creating placeholder cube.")
-        omni.kit.commands.execute(
-            "CreatePrimCommand",
-            prim_type="Cube",
-            prim_path=robot_path,
-            attributes={
-                "xformOp:scale": Gf.Vec3f(0.5, 0.3, 0.2),
-                "xformOp:translate": Gf.Vec3d(0.0, 0.0, 0.2),
-            },
-        )
+    # Check Nucleus reachability without a blocking network call.
+    # omni.client.stat() times out after ~2 minutes when the server is unreachable.
+    # Only probe if ISAAC_NUCLEUS_URI env var is set (operator explicitly enabled Nucleus).
+    # Use an alias so that 'omni' stays bound to the module-level global throughout
+    # this function (a bare 'import omni.client' would shadow it as an unbound local).
+    nucleus_ok = False
+    if os.environ.get("ISAAC_NUCLEUS_URI"):
+        try:
+            import omni.client as _oc
+            result, _ = _oc.stat(robot_usd)
+            nucleus_ok = (result == _oc.Result.OK)
+        except Exception:
+            pass
 
+    if nucleus_ok:
+        try:
+            omni.kit.commands.execute(
+                "CreateReferenceCommand",
+                usd_context=omni.usd.get_context(),
+                path_to=robot_path,
+                asset_path=robot_usd,
+            )
+            carb.log_info(f"Loaded robot from {robot_usd}")
+            return robot_path
+        except Exception as e:
+            carb.log_warn(f"CreateReferenceCommand failed ({e}). Using placeholder.")
+
+    carb.log_warn("Nucleus not available — using placeholder Xform for robot.")
+    # Use Xform (not Cube) so that OmniRadar/OmniLidar sensor children can be
+    # nested under it.  USD forbids nesting Gprims inside other Gprims, so a
+    # Cube parent would block OmniRadar creation.
+    omni.kit.commands.execute("CreatePrimCommand", prim_type="Xform", prim_path=robot_path)
+    _set_xform(stage, robot_path, translate=(0.0, 0.0, 0.2))
     return robot_path
 
 
@@ -252,10 +261,17 @@ def attach_lidar_sensor(stage, parent_path: str):
     lidar_config = load_config("lidar_params.yaml")
     lidar_path = f"{parent_path}/LidarSensor"
 
+    # Isaac Sim 5.1: when config is provided, IsaacSensorCreateRtxLidar tries to load
+    # the sensor USD from Nucleus (get_assets_root_path()), which hangs/fails without
+    # a Nucleus server.  force_camera_prim=True skips the reference lookup and creates
+    # a plain Camera prim at the correct absolute path; we still pass config/variant so
+    # the attributes are set when a reference IS available.
     omni.kit.commands.execute(
         "IsaacSensorCreateRtxLidar",
         path=lidar_path,
-        config=lidar_config.get("config_name", "OS1_64"),
+        config=lidar_config.get("config", "OS1"),
+        variant=lidar_config.get("variant", "OS1_REV7_128ch10hz1024res"),
+        force_camera_prim=True,
     )
 
     lidar_prim = stage.GetPrimAtPath(lidar_path)
@@ -430,12 +446,9 @@ def add_weather_effects(stage, weather_type: str = "fog", fog_preset: str = "lig
                 "CreatePrimCommand",
                 prim_type="Sphere",
                 prim_path=path,
-                attributes={
-                    "xformOp:translate": Gf.Vec3d(x, y, z),
-                    "xformOp:scale":     Gf.Vec3f(0.04, 0.04, 0.04),
-                    "radius": 0.04,
-                },
+                attributes={"radius": 0.04},
             )
+            _set_xform(stage, path, translate=(x, y, z))
             _bind_material(stage, path, rain_mat)
         carb.log_info(f"Weather: rain — {count} metallic clutter prims added.")
 
@@ -473,12 +486,7 @@ def add_dynamic_objects(
             "CreatePrimCommand",
             prim_type="Cylinder",
             prim_path=cfg["path"],
-            attributes={
-                "xformOp:translate": Gf.Vec3d(*cfg["start"]),
-                "xformOp:scale":     Gf.Vec3f(0.2, 0.2, 0.9),
-                "radius": 0.2,
-                "height": 1.8,
-            },
+            attributes={"radius": 0.2, "height": 1.8},
         )
         _bind_material(stage, cfg["path"], ped_mat)
 
@@ -499,15 +507,7 @@ def add_dynamic_objects(
 
     # ── Vehicles: linear one-way travel ──────────────────────────────────────
     for cfg in _VEHICLE_DEFS[:num_vehicles]:
-        omni.kit.commands.execute(
-            "CreatePrimCommand",
-            prim_type="Cube",
-            prim_path=cfg["path"],
-            attributes={
-                "xformOp:translate": Gf.Vec3d(*cfg["start"]),
-                "xformOp:scale":     Gf.Vec3f(2.2, 0.9, 0.75),
-            },
-        )
+        omni.kit.commands.execute("CreatePrimCommand", prim_type="Cube", prim_path=cfg["path"])
         _bind_material(stage, cfg["path"], car_mat)
         _add_collision(stage, cfg["path"])
 
@@ -515,6 +515,7 @@ def add_dynamic_objects(
         if prim.IsValid():
             xform = UsdGeom.Xformable(prim)
             xform.ClearXformOpOrder()
+            xform.AddScaleOp(UsdGeom.XformOp.PrecisionDouble).Set(Gf.Vec3d(2.2, 0.9, 0.75))  # static car size
             op = xform.AddTranslateOp()
             sx, sy, sz = cfg["start"]
             ex, ey, ez = cfg["end"]

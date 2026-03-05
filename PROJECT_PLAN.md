@@ -2,7 +2,7 @@
 
 > **Status**: Active / Living Document
 > **Created**: 2026-02-13
-> **Last Updated**: 2026-02-27
+> **Last Updated**: 2026-03-05
 > **Isaac Sim Version**: 5.1.0
 > **Deployment**: Docker (multi-container)
 
@@ -70,6 +70,26 @@ Extensions are enabled programmatically via `isaac_sim_scripts/enable_extensions
 ### 0.5 Previous Approach — Native Install **[DEPRECATED]**
 
 > Replaced by Docker on 2026-02-23. Native install (Omniverse Launcher + host ROS2 Jazzy) had driver version conflicts between Isaac Sim 5.x (requires 580+) and the host system (535.288). Docker isolates this cleanly. Host ROS2 Jazzy install retained for local debugging.
+
+### 0.6 Known Issue — RTX Radar Crash in Isaac Sim 5.1 Headless **[ACTIVE — FIX IN PROGRESS]**
+
+> **Identified**: 2026-03-05
+
+Both NVIDIA RTX radar model plugins (`wpm_dmatapprox`, `dmatapprox`) crash during
+`carbOnPluginPreStartup` when Isaac Sim 5.1 is launched headless via `python.sh`.
+The carb interfaces they depend on (`IMaterialReaderFactory`, `IProfileReaderFactory`)
+are not yet registered when plugin startup runs in the `python.sh` launch path.
+
+This is an **NVIDIA regression in Isaac Sim 5.1** — not a bug in this project's code.
+
+**Chosen fix**: Run Isaac Sim under `xvfb-run -a` (Xvfb virtual framebuffer). This
+changes the carb plugin initialization order so all required interfaces are registered
+before the radar plugins start. NVIDIA's documentation recommends `xvfb-run` for
+headless simulation with RTX sensor features. See EXECUTION_PLAN.md Step 16 for details.
+
+**Note**: A physics-raycasting fallback was prototyped and discarded. Material-aware
+multi-bounce WPM simulation is the core purpose of using Isaac Sim; synthetic raycasts
+defeat that purpose.
 
 ---
 
@@ -337,6 +357,7 @@ All significant decisions are recorded here with date and rationale.
 | 2026-02-23 | **Isaac Sim 5.1.0** (upgrade from 4.5.0) | Latest GA release, best sensor and extension support. Docker makes driver requirements a non-issue. | 4.5.0 (compatible with current host driver but older), 6.0 (early preview, not GA) |
 | 2026-02-23 | **ROS2 Humble** (in containers, replaces Jazzy) | Native match for Ubuntu 22.04 in NVIDIA's container base image. LTS release. | Jazzy (requires Ubuntu 24.04, not supported in Isaac Sim containers) |
 | 2026-02-27 | **Isaac Sim 5.1 extension name migration** | `omni.isaac.ros2_bridge` → `isaacsim.ros2.bridge`; `omni.isaac.sensor` → `isaacsim.sensors.rtx`; OmniGraph node type strings follow same pattern. `omni.sensors.nv.*` unchanged (Omniverse layer). OmniRadar prim replaces Camera-based radar prim in 5.x. | N/A — breaking change mandated by NVIDIA |
+| 2026-03-05 | **RTX radar fix: Xvfb virtual framebuffer** | Headless `python.sh` launch path triggers carb plugin startup order bug in 5.1 — radar plugins crash before their required interfaces are registered. `xvfb-run -a` corrects initialization order. Chosen over downgrading to 4.5 (more rework) or using `isaac-sim.sh --exec` (less tested path). | Downgrade to 4.5; upgrade to 5.2+; use `isaac-sim.sh --exec` |
 
 ---
 

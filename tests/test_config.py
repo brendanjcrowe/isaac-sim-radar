@@ -27,7 +27,9 @@ class TestConfigFiles(unittest.TestCase):
 
     def test_lidar_params(self):
         cfg = self._load("lidar_params.yaml")
-        self.assertIn("config_name", cfg)
+        # Isaac Sim 5.0+ uses config (sensor family) + variant (resolution/rate)
+        self.assertIn("config", cfg)
+        self.assertIn("variant", cfg)
         self.assertIn("mount_offset", cfg)
         self.assertIn("ros2_topic", cfg)
 

@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-02-27
-> **Status**: In Progress — Infrastructure complete; awaiting NGC auth + GPU for runtime verification
+> **Last Updated**: 2026-03-05
+> **Status**: In Progress — Infrastructure complete; RTX radar headless crash identified; Xvfb fix in progress
 
 ---
 
@@ -204,6 +204,51 @@ These steps produced working code that carries forward into the Docker setup:
   - CLI argparse: all new flags, invalid value rejection, combined flags
 
 **Test count: 98/100 passing (2 pre-existing open3d import skips)**
+
+---
+
+---
+
+## Step 16: RTX Radar Headless Crash — Diagnosis & Fix
+
+### 16a. Root Cause ❌ (identified 2026-03-05)
+
+When running Isaac Sim 5.1 headless via `python.sh`, both RTX radar model plugins
+(`wpm_dmatapprox` and `dmatapprox`) crash in `carbOnPluginPreStartup`:
+
+```
+[Error] [carb.plugin] carbOnPluginPreStartup() failed for plugin wpm_dmatapprox
+[Error] [carb.plugin] carbOnPluginPreStartup() failed for plugin dmatapprox
+```
+
+**Cause**: The carb interfaces these plugins require (`IMaterialReaderFactory`,
+`IProfileReaderFactory`) are registered too late in the plugin startup sequence
+when Isaac Sim is launched headless via `python.sh`. This is an **NVIDIA regression
+in Isaac Sim 5.1** — the same plugins work in NVIDIA's own CI/CD pipelines, but
+those use a different launch path.
+
+**Note**: A physics-raycasting fallback was prototyped but discarded. The whole
+point of using Isaac Sim is material-aware multi-bounce WPM radar simulation —
+not synthetic raycasts.
+
+### 16b. Proposed Fixes (evaluated 2026-03-05)
+
+| Option | Likelihood | Effort | Notes |
+|---|---|---|---|
+| **Xvfb virtual framebuffer** | High | Low | `xvfb-run -a` changes carb plugin init order; NVIDIA docs recommend this for headless RTX |
+| Downgrade to Isaac Sim 4.5 | High | Medium | Original target; WPM radar confirmed working in 4.5; requires re-testing API changes |
+| Upgrade to Isaac Sim 5.2+ | Medium | Medium | Possible regression fix; no confirmed release date at time of writing |
+| Use `isaac-sim.sh --exec` | Medium | Low | Full app stack pre-initializes all extensions before user script runs |
+
+**Chosen**: Xvfb (Option 1) — 3-line Dockerfile change, zero code changes to simulation scripts.
+
+### 16c. Xvfb Fix ⏳ (Step 16, in progress)
+
+- [ ] `docker/isaac-sim/Dockerfile` — add `xvfb` package
+- [ ] `docker/isaac-sim/entrypoint.sh` — wrap `python.sh` call with `xvfb-run -a`
+- [ ] `docker/docker-compose.yaml` — remove any `DISPLAY` env workarounds if present
+- [ ] Re-test: `docker run ... run_headless.py --no-ros2 --duration 30` — confirm no radar plugin crash
+- [ ] Verify radar UDP packets emitted: `docker exec ros2-bridge ros2 topic echo /radar/point_cloud`
 
 ---
 

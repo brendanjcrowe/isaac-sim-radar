@@ -1,7 +1,9 @@
 # RTX Lidar configuration for Isaac Sim
-# Using Ouster OS1-64 profile as ground-truth comparison sensor
+# Using Ouster OS1 profile as ground-truth comparison sensor
+# Isaac Sim 5.0+ API: separate config (sensor family) and variant (resolution/rate)
 
-config_name: "OS1_64"
+config: "OS1"
+variant: "OS1_REV7_128ch10hz1024res"
 
 # Sensor mount offset relative to robot base_link (meters)
 mount_offset:
