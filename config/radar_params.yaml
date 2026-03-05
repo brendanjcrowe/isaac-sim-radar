@@ -1,8 +1,9 @@
-# Physics raycast radar configuration
-# RTX radar model plugins (wpm_dmatapprox, dmatapprox) both crash in Isaac Sim
-# 5.1 headless mode (NVIDIA regression). We use omni.physx raycasting instead.
-
-model: "physx_raycast"
+# RTX Radar configuration for Isaac Sim
+# Using WpmDmatApproxRadar — material-aware, multi-bounce wave propagation model.
+# sensorModelPluginName: omni.sensors.nv.radar.wpm_dmatapprox.plugin
+# sensorModelConfig:      WpmDmatApproxRadar
+# (set on the OmniRadar prim in attach_radar_sensor)
+model: "WpmDmatApproxRadar"
 
 # Sensor mount offset relative to robot base_link (meters)
 mount_offset:
@@ -10,46 +11,7 @@ mount_offset:
   y: 0.0    # centered laterally
   z: 0.4    # height above base
 
-# Range configuration
-range:
-  max_range_m: 100.0
-  range_resolution_m: 0.1
-  range_separation_m: 0.04
-
-# Velocity (Doppler) configuration
-velocity:
-  max_velocity_mps: 30.0
-  velocity_resolution_mps: 0.1
-  velocity_separation_mps: 0.04
-
-# Angular field of view
-fov:
-  max_azimuth_deg: 75.0
-  max_elevation_deg: 20.0
-  azimuth_resolution_deg: 1.0
-  elevation_resolution_deg: 2.0
-
-# Physics raycast parameters (used by run_headless.py)
-azimuth_fov_deg: 150.0    # total azimuth sweep (±75°)
-elevation_fov_deg: 20.0   # total elevation sweep (±10°)
-azimuth_steps: 30         # number of azimuth rays
-elevation_steps: 5        # number of elevation rays
-max_range_m: 200.0        # maximum raycast distance (meters)
-
-# CFAR detector tuning
-cfar:
-  test_cells: 16
-  guard_cells: 4
-  threshold_db: 12.0
-
-# Noise model
-noise:
-  range_noise_mean: 0.0
-  range_noise_sdev: 0.02
-  azimuth_noise_sdev_rad: 0.01
-  elevation_noise_sdev_rad: 0.02
-
-# UDP output (TranscoderRadar node settings)
+# UDP output — raw GMO bytes sent to this multicast address each simulation step
 udp:
   remote_ip: "239.0.0.1"
   remote_port: 10001

@@ -10,7 +10,7 @@ This script:
 4. Attaches RTX Radar sensor with WpmDmatApproxRadar config
 5. Attaches RTX Lidar sensor
 6. Enables ROS2 bridge extension
-7. Configures TranscoderRadar OmniGraph node for UDP output
+7. Sets up OmniRadar replicator annotator for UDP output
 8. Sets up LiDAR → ROS2 OmniGraph publishing
 """
 
@@ -215,32 +215,41 @@ def spawn_robot(stage, robot_usd: str = ROBOT_USD):
 
 
 def attach_radar_sensor(stage, parent_path: str):
-    """Create an RTX Radar sensor attached to the robot."""
+    """Create an RTX Radar sensor (OmniRadar prim) attached to the robot.
+
+    IsaacSensorCreateRtxRadar uses the Replicator API internally.
+    rep.functional.create.omni_radar receives the prim path with its leading
+    '/' stripped, leaving "World/Robot/RadarSensor" as the name parameter.
+    Replicator treats '/' in names as invalid and renames the prim, so the
+    sensor ends up at the wrong path.
+
+    We work around this by defining the OmniRadar prim directly via USD and
+    applying the IsaacRtxRadarSensorAPI schema — the same attributes the
+    command would set.
+    """
     radar_config = load_config("radar_params.yaml")
     radar_path = f"{parent_path}/RadarSensor"
 
-    # Create the RTX Radar sensor prim
-    omni.kit.commands.execute(
-        "IsaacSensorCreateRtxRadar",
-        path=radar_path,
-    )
+    try:
+        import omni.isaac.IsaacSensorSchema as IsaacSensorSchema
+        from pxr import Sdf as _Sdf
+
+        radar_prim = stage.DefinePrim(radar_path, "OmniRadar")
+        IsaacSensorSchema.IsaacRtxRadarSensorAPI.Apply(radar_prim)
+        radar_prim.CreateAttribute(
+            "sensorModelPluginName", _Sdf.ValueTypeNames.String, False
+        ).Set("omni.sensors.nv.radar.wpm_dmatapprox.plugin")
+        radar_prim.CreateAttribute(
+            "sensorModelConfig", _Sdf.ValueTypeNames.String, False
+        ).Set("WpmDmatApproxRadar")
+    except Exception as e:
+        carb.log_error(f"Failed to define OmniRadar prim: {e}")
+        return None
 
     radar_prim = stage.GetPrimAtPath(radar_path)
     if not radar_prim.IsValid():
-        carb.log_error("Failed to create RTX Radar sensor")
+        carb.log_error(f"OmniRadar prim not valid after creation at {radar_path}")
         return None
-
-    # Set radar model to WpmDmatApproxRadar.
-    # In Isaac Sim 5.x, IsaacSensorCreateRtxRadar creates an OmniRadar prim
-    # (not a Camera prim). The model config attribute is the same but guarded
-    # defensively — WpmDmatApprox is the default model so this is a no-op if
-    # the attribute is absent.
-    for attr_name in ("rtxsensor:modelConfig", "omni:sensor:config"):
-        if radar_prim.HasAttribute(attr_name):
-            radar_prim.GetAttribute(attr_name).Set("WpmDmatApproxRadar")
-            break
-    else:
-        carb.log_info("Radar model attribute not found; using sensor default (WpmDmatApprox).")
 
     # Apply mount offset from config
     mount = radar_config.get("mount_offset", {})
@@ -261,17 +270,14 @@ def attach_lidar_sensor(stage, parent_path: str):
     lidar_config = load_config("lidar_params.yaml")
     lidar_path = f"{parent_path}/LidarSensor"
 
-    # Isaac Sim 5.1: when config is provided, IsaacSensorCreateRtxLidar tries to load
-    # the sensor USD from Nucleus (get_assets_root_path()), which hangs/fails without
-    # a Nucleus server.  force_camera_prim=True skips the reference lookup and creates
-    # a plain Camera prim at the correct absolute path; we still pass config/variant so
-    # the attributes are set when a reference IS available.
+    # config="OS1" matches the USD at /Isaac/Sensors/Ouster/OS1/OS1.usd on NVIDIA's CDN.
+    # variant selects the specific emitter layout within that USD.
+    # Isaac Sim resolves get_assets_root_path() to NVIDIA's public CDN — no local Nucleus needed.
     omni.kit.commands.execute(
         "IsaacSensorCreateRtxLidar",
         path=lidar_path,
         config=lidar_config.get("config", "OS1"),
         variant=lidar_config.get("variant", "OS1_REV7_128ch10hz1024res"),
-        force_camera_prim=True,
     )
 
     lidar_prim = stage.GetPrimAtPath(lidar_path)
@@ -293,49 +299,34 @@ def attach_lidar_sensor(stage, parent_path: str):
     return lidar_path
 
 
-def setup_radar_udp_output(stage, radar_path: str):
-    """Configure the TranscoderRadar OmniGraph node for UDP output."""
-    radar_config = load_config("radar_params.yaml")
-    udp = radar_config.get("udp", {})
+def setup_radar_annotator(radar_path: str):
+    """Attach a replicator annotator to the OmniRadar render product.
 
-    # Create an OmniGraph action graph for radar transcoding
-    graph_path = "/World/RadarGraph"
+    Creates a RenderProduct for the OmniRadar prim and attaches an RtxSensorCpu
+    annotator. Call annotator.get_data() each simulation step to retrieve the
+    raw GenericModelOutput (GMO) binary produced by WpmDmatApproxRadar.
 
+    TranscoderRadar OmniGraph node is for physical radar hardware transcoding
+    (e.g. CONTINENTAL ARS430) and does not work for simulated OmniRadar prims.
+    Annotators are the correct Isaac Sim 5.x approach for simulated RTX sensors.
+
+    Returns:
+        annotator handle, or None on failure.
+    """
     try:
-        import omni.graph.core as og
+        import omni.replicator.core as rep
 
-        keys = og.Controller.Keys
-        (graph, nodes, _, _) = og.Controller.edit(
-            {"graph_path": graph_path, "evaluator_name": "push"},
-            {
-                keys.CREATE_NODES: [
-                    ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
-                    ("RenderProduct", "isaacsim.core.nodes.IsaacCreateRenderProduct"),
-                    ("TranscoderRadar", "omni.sensors.nv.radar.TranscoderRadar"),
-                ],
-                keys.CONNECT: [
-                    ("OnPlaybackTick.outputs:tick", "RenderProduct.inputs:execIn"),
-                    ("RenderProduct.outputs:execOut", "TranscoderRadar.inputs:execIn"),
-                    ("RenderProduct.outputs:renderProductPath",
-                     "TranscoderRadar.inputs:renderProductPath"),
-                ],
-                keys.SET_VALUES: [
-                    ("RenderProduct.inputs:cameraPrim", radar_path),
-                    ("TranscoderRadar.inputs:remoteIP",
-                     udp.get("remote_ip", "239.0.0.1")),
-                    ("TranscoderRadar.inputs:remotePort",
-                     udp.get("remote_port", 10001)),
-                    ("TranscoderRadar.inputs:interfaceIP",
-                     udp.get("interface_ip", "0.0.0.0")),
-                ],
-            },
-        )
-        carb.log_info(f"Radar UDP output graph created at {graph_path}")
+        render_product = rep.create.render_product(radar_path, [1, 1])
+        annotator = rep.AnnotatorRegistry.get_annotator("RtxSensorCpu")
+        annotator.attach([render_product])
+        carb.log_info(f"Radar annotator attached to {radar_path}")
+        return annotator
     except Exception as e:
         carb.log_warn(
-            f"Could not create radar OmniGraph ({e}). "
-            "You may need to set up the TranscoderRadar node manually."
+            f"Could not set up radar annotator ({e}). "
+            "Radar GMO data will not be sent via UDP."
         )
+        return None
 
 
 def setup_lidar_ros2_publisher(stage, lidar_path: str):

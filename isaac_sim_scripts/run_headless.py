@@ -20,6 +20,7 @@ Usage (inside isaac-sim container):
 import argparse
 import os
 import signal
+import socket
 import sys
 import time
 
@@ -83,8 +84,9 @@ from launch_scene import (  # noqa: E402
     attach_radar_sensor,
     create_ground_plane,
     create_urban_environment,
+    load_config,
     setup_lidar_ros2_publisher,
-    setup_radar_udp_output,
+    setup_radar_annotator,
     spawn_robot,
 )
 
@@ -117,8 +119,23 @@ robot_path = spawn_robot(stage)
 radar_path = attach_radar_sensor(stage, robot_path)
 lidar_path = attach_lidar_sensor(stage, robot_path)
 
+# Set up radar annotator + UDP send socket
+radar_annotator = None
+_radar_sock = None
+_radar_udp_addr = None
+
 if radar_path:
-    setup_radar_udp_output(stage, radar_path)
+    radar_annotator = setup_radar_annotator(radar_path)
+
+    _rdr_cfg = load_config("radar_params.yaml")
+    _udp = _rdr_cfg.get("udp", {})
+    _radar_udp_addr = (_udp.get("remote_ip", "239.0.0.1"), int(_udp.get("remote_port", 10001)))
+    try:
+        _radar_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        _radar_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        carb.log_info(f"Radar UDP socket ready, sending to {_radar_udp_addr}")
+    except OSError as _e:
+        carb.log_warn(f"Could not create radar UDP socket: {_e}")
 
 if lidar_path and not args.no_ros2:
     setup_lidar_ros2_publisher(stage, lidar_path)
@@ -144,6 +161,17 @@ try:
     while simulation_app.is_running() and not _shutdown:
         simulation_app.update()
         frame += 1
+
+        # Send raw GMO bytes from OmniRadar annotator via UDP each frame
+        if radar_annotator is not None and _radar_sock is not None:
+            _rdata = radar_annotator.get_data()
+            if _rdata is not None:
+                _raw = _rdata.get("data") if isinstance(_rdata, dict) else _rdata
+                if _raw is not None and len(_raw) > 0:
+                    try:
+                        _radar_sock.sendto(bytes(_raw), _radar_udp_addr)
+                    except OSError:
+                        pass
 
         # Duration-based exit
         if args.duration > 0.0 and (time.time() - start_time) >= args.duration:

@@ -18,12 +18,9 @@ class TestConfigFiles(unittest.TestCase):
     def test_radar_params(self):
         cfg = self._load("radar_params.yaml")
         self.assertEqual(cfg["model"], "WpmDmatApproxRadar")
-        self.assertIn("range", cfg)
-        self.assertIn("velocity", cfg)
-        self.assertIn("fov", cfg)
+        self.assertIn("mount_offset", cfg)
         self.assertIn("udp", cfg)
         self.assertEqual(cfg["udp"]["remote_port"], 10001)
-        self.assertGreater(cfg["range"]["max_range_m"], 0)
 
     def test_lidar_params(self):
         cfg = self._load("lidar_params.yaml")

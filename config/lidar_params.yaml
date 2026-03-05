@@ -1,6 +1,8 @@
 # RTX Lidar configuration for Isaac Sim
-# Using Ouster OS1 profile as ground-truth comparison sensor
-# Isaac Sim 5.0+ API: separate config (sensor family) and variant (resolution/rate)
+# Using Ouster OS1-64 as ground-truth comparison sensor
+# Isaac Sim 5.0+ API:
+#   config  = model family name, matches /Isaac/Sensors/Ouster/OS1/OS1.usd on NVIDIA CDN
+#   variant = USD variant name selecting emitter layout (sensorModelConfig attribute)
 
 config: "OS1"
 variant: "OS1_REV7_128ch10hz1024res"

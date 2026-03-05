@@ -5,8 +5,10 @@ FROM nvcr.io/nvidia/isaac-sim:5.1.0
 # (wpm_dmatapprox, dmatapprox) crash in carbOnPluginPreStartup because
 # IMaterialReaderFactory / IProfileReaderFactory are not yet registered.
 # NVIDIA's own documentation recommends xvfb-run for headless RTX sensor use.
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb x11-utils \
     && rm -rf /var/lib/apt/lists/*
+USER isaac-sim
 
 # Install Python dependencies
 RUN /isaac-sim/python.sh -m pip install pyyaml
