@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-03-05
-> **Status**: In Progress — Infrastructure complete; RTX radar headless crash identified; Xvfb fix in progress
+> **Last Updated**: 2026-03-06
+> **Status**: In Progress — Sensor pipeline complete in code (Step 16d); runtime verification pending
 
 ---
 
@@ -242,12 +242,33 @@ not synthetic raycasts.
 
 **Chosen**: Xvfb (Option 1) — 3-line Dockerfile change, zero code changes to simulation scripts.
 
-### 16c. Xvfb Fix ✅ (code complete; runtime verification pending)
+### 16c. Xvfb Fix ✅
 
-- [x] `docker/isaac-sim/Dockerfile` — add `xvfb` package via `apt-get`
-- [x] `docker/isaac-sim/entrypoint.sh` — wrap both default and passthrough commands with `xvfb-run -a`
-- [ ] Re-test: `docker run ... run_headless.py --no-ros2 --duration 30` — confirm no radar plugin crash
-- [ ] Verify radar UDP packets emitted: `docker exec ros2-bridge ros2 topic echo /radar/point_cloud`
+- [x] `docker/isaac-sim/Dockerfile` — `USER root` + `apt-get install xvfb x11-utils` + `USER isaac-sim`
+- [x] `docker/isaac-sim/entrypoint.sh` — manual Xvfb startup + `xdpyinfo` readiness polling
+  (replaced original `xvfb-run -a` which hangs in Docker — SIGUSR1 delivery doesn't work in containers)
+
+### 16d. Sensor Pipeline Fixes ✅ (code complete; runtime verification pending)
+
+Runtime debugging revealed three additional bugs (resolved without NGC/GPU):
+
+**Bug 1 — `IsaacSensorCreateRtxRadar` wrong prim path** (Replicator renames `/` in names):
+- [x] `launch_scene.py` `attach_radar_sensor` — bypass command entirely; define `OmniRadar` prim
+  directly via `stage.DefinePrim` + `IsaacRtxRadarSensorAPI.Apply`
+
+**Bug 2 — LiDAR `OS1.json not found` / CUDA errors**:
+- [x] `launch_scene.py` `attach_lidar_sensor` — remove `force_camera_prim=True`; let `_add_reference()`
+  load sensor USD from CDN with `config="OS1"`, `variant="OS1_REV7_128ch10hz1024res"`
+
+**Bug 3 — `TranscoderRadar` is for physical hardware, not simulated radar**:
+- [x] `launch_scene.py` — replace `setup_radar_udp_output` / `TranscoderRadar` OmniGraph with
+  `setup_radar_annotator` using `rep.create.render_product` + `RtxSensorCpu` annotator
+- [x] `run_headless.py` — read annotator GMO data each frame; send raw bytes via UDP multicast socket
+- [x] `config/radar_params.yaml` — restore to WpmDmatApproxRadar (physics-raycast content removed)
+
+**Remaining runtime verification:**
+- [ ] `docker run ... run_headless.py --no-ros2 --duration 30` — confirm `radar_ok=True lidar_ok=True`
+- [ ] Verify radar UDP packets received: `docker exec ros2-bridge ros2 topic echo /radar/point_cloud`
 
 ---
 
