@@ -2,7 +2,7 @@
 
 > **Created**: 2026-02-17
 > **Last Updated**: 2026-03-06
-> **Status**: In Progress — Sensor pipeline complete in code (Step 16d); runtime verification pending
+> **Status**: In Progress — Headless simulation runs cleanly (Step 16e); radar UDP not yet verified end-to-end
 
 ---
 
@@ -266,9 +266,27 @@ Runtime debugging revealed three additional bugs (resolved without NGC/GPU):
 - [x] `run_headless.py` — read annotator GMO data each frame; send raw bytes via UDP multicast socket
 - [x] `config/radar_params.yaml` — restore to WpmDmatApproxRadar (physics-raycast content removed)
 
-**Remaining runtime verification:**
-- [ ] `docker run ... run_headless.py --no-ros2 --duration 30` — confirm `radar_ok=True lidar_ok=True`
-- [ ] Verify radar UDP packets received: `docker exec ros2-bridge ros2 topic echo /radar/point_cloud`
+### 16e. Runtime Verification ✅ (headless sim clean; UDP not yet end-to-end verified)
+
+Runtime testing revealed two more bugs fixed during this session:
+
+**Bug 4 — Wrong USD API schema** (`IsaacRtxRadarSensorAPI` left plugin looking for `Example_Rotary.json`):
+- Root cause: `IsaacRtxRadarSensorAPI` + `sensorModelConfig="WpmDmatApproxRadar"` not read by WpmDMAT
+  plugin; plugin fell back to default `"Example_Rotary"` profile which only exists in lidar directory
+- [x] `launch_scene.py` — apply `OmniSensorGenericRadarWpmDmatAPI` (from `omni.usd.schema.omni_sensors`)
+  via `Usd.SchemaRegistry().GetAPITypeFromSchemaTypeName(...)` + `prim.ApplyAPI()`; no JSON config needed
+
+**Bug 5 — MotionBVH not initialised in headless mode** (plugin calls `std::terminate()`):
+- [x] `run_headless.py` — set `/app/sensors/nv/radar/runWithoutMBVH = True` via `carb.settings`
+  right after carb import (NVIDIA provided this explicit bypass for headless environments)
+
+**Result**: 120s simulation run exits cleanly (exit 0). No Fatal or Error messages. Radar plugin
+initialises. Remaining benign warning: `Material mapping not accessible` (affects per-material
+reflectivity weights; radar still produces detections using default surface properties).
+
+**Remaining:**
+- [ ] Verify radar UDP packets arriving: start both containers + `nc -lu 10001` or ROS2 echo
+- [ ] Verify lidar ROS2 topic: `docker exec ros2-bridge ros2 topic echo /lidar/point_cloud`
 
 ---
 
