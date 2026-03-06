@@ -217,31 +217,41 @@ def spawn_robot(stage, robot_usd: str = ROBOT_USD):
 def attach_radar_sensor(stage, parent_path: str):
     """Create an RTX Radar sensor (OmniRadar prim) attached to the robot.
 
-    IsaacSensorCreateRtxRadar uses the Replicator API internally.
-    rep.functional.create.omni_radar receives the prim path with its leading
-    '/' stripped, leaving "World/Robot/RadarSensor" as the name parameter.
-    Replicator treats '/' in names as invalid and renames the prim, so the
-    sensor ends up at the wrong path.
+    The correct Isaac Sim 5.x API for a WpmDMAT radar sensor is:
+      - prim type:  OmniRadar
+      - API schema: OmniSensorGenericRadarWpmDmatAPI
+        (from omni.usd.schema.omni_sensors extension)
 
-    We work around this by defining the OmniRadar prim directly via USD and
-    applying the IsaacRtxRadarSensorAPI schema — the same attributes the
-    command would set.
+    This schema sets omni:sensor:modelName = "RadarWPMDMAT", which registers
+    the correct RTX plugin. All sensor parameters (FOV, range, CFAR, etc.)
+    default from the schema — no JSON config file needed.
+
+    Do NOT use IsaacRtxRadarSensorAPI / sensorModelConfig / sensorModelPluginName:
+    those attributes are not read by the WpmDMAT plugin and leave it searching
+    for a missing default profile (Example_Rotary.json).
     """
     radar_config = load_config("radar_params.yaml")
     radar_path = f"{parent_path}/RadarSensor"
 
     try:
-        import omni.isaac.IsaacSensorSchema as IsaacSensorSchema
-        from pxr import Sdf as _Sdf
+        from pxr import Usd as _Usd
 
         radar_prim = stage.DefinePrim(radar_path, "OmniRadar")
-        IsaacSensorSchema.IsaacRtxRadarSensorAPI.Apply(radar_prim)
-        radar_prim.CreateAttribute(
-            "sensorModelPluginName", _Sdf.ValueTypeNames.String, False
-        ).Set("omni.sensors.nv.radar.wpm_dmatapprox.plugin")
-        radar_prim.CreateAttribute(
-            "sensorModelConfig", _Sdf.ValueTypeNames.String, False
-        ).Set("WpmDmatApproxRadar")
+
+        # Apply WpmDMAT radar API schema — registers the plugin and sets
+        # all omni:sensor:* defaults (modelName, tickRate, FOV, CFAR …)
+        schema_registry = _Usd.SchemaRegistry()
+        api_type = schema_registry.GetAPITypeFromSchemaTypeName(
+            "OmniSensorGenericRadarWpmDmatAPI"
+        )
+        if api_type.isUnknown:
+            carb.log_error(
+                "OmniSensorGenericRadarWpmDmatAPI not found — "
+                "is omni.usd.schema.omni_sensors loaded?"
+            )
+            return None
+        radar_prim.ApplyAPI(api_type)
+
     except Exception as e:
         carb.log_error(f"Failed to define OmniRadar prim: {e}")
         return None
@@ -261,7 +271,7 @@ def attach_radar_sensor(stage, parent_path: str):
         mount.get("z", 0.4),
     ))
 
-    carb.log_info(f"RTX Radar sensor created at {radar_path}")
+    carb.log_info(f"RTX Radar sensor (WpmDMAT) created at {radar_path}")
     return radar_path
 
 

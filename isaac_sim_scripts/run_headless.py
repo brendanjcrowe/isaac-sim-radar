@@ -72,6 +72,13 @@ simulation_app = SimulationApp({"headless": True, "anti_aliasing": 0})
 
 # ── Safe to import omni.* now ───────────────────────────────────────────────
 import carb  # noqa: E402
+
+# WpmDmatApprox radar requires MotionBVH (ray-BVH for moving objects), which is
+# not initialised in headless mode.  NVIDIA provides this explicit bypass flag.
+# Without it the plugin calls std::terminate() when the first OmniRadar prim
+# is instantiated.  The bypass disables motion-blur-accurate multi-bounce traces
+# for dynamic objects but the static scene accuracy is unaffected.
+carb.settings.get_settings().set("/app/sensors/nv/radar/runWithoutMBVH", True)
 import omni.timeline  # noqa: E402
 import omni.usd  # noqa: E402
 from pxr import UsdGeom  # noqa: E402
