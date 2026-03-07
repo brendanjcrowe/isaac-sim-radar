@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-03-06
-> **Status**: In Progress — Headless simulation runs cleanly (Step 16e); radar UDP not yet verified end-to-end
+> **Last Updated**: 2026-03-07
+> **Status**: In Progress — Probe confirmed GMO annotator pipeline; run_headless annotator returns empty (scan config hypothesis)
 
 ---
 
@@ -262,31 +262,55 @@ Runtime debugging revealed three additional bugs (resolved without NGC/GPU):
 
 **Bug 3 — `TranscoderRadar` is for physical hardware, not simulated radar**:
 - [x] `launch_scene.py` — replace `setup_radar_udp_output` / `TranscoderRadar` OmniGraph with
-  `setup_radar_annotator` using `rep.create.render_product` + `RtxSensorCpu` annotator
+  `setup_radar_annotator` using `rep.create.render_product` + `GenericModelOutput` annotator
 - [x] `run_headless.py` — read annotator GMO data each frame; send raw bytes via UDP multicast socket
 - [x] `config/radar_params.yaml` — restore to WpmDmatApproxRadar (physics-raycast content removed)
 
-### 16e. Runtime Verification ✅ (headless sim clean; UDP not yet end-to-end verified)
+### 16e. Runtime Verification — In Progress (2026-03-07)
 
-Runtime testing revealed two more bugs fixed during this session:
+Runtime testing revealed additional bugs found via a standalone `probe_radar.py` diagnostic script
+and subsequent full `run_headless.py` runs.
 
 **Bug 4 — Wrong USD API schema** (`IsaacRtxRadarSensorAPI` left plugin looking for `Example_Rotary.json`):
 - Root cause: `IsaacRtxRadarSensorAPI` + `sensorModelConfig="WpmDmatApproxRadar"` not read by WpmDMAT
   plugin; plugin fell back to default `"Example_Rotary"` profile which only exists in lidar directory
-- [x] `launch_scene.py` — apply `OmniSensorGenericRadarWpmDmatAPI` (from `omni.usd.schema.omni_sensors`)
-  via `Usd.SchemaRegistry().GetAPITypeFromSchemaTypeName(...)` + `prim.ApplyAPI()`; no JSON config needed
+- [x] `launch_scene.py` `attach_radar_sensor` — switched to `IsaacSensorCreateRtxRadar` command, which
+  applies all required schemas: `OmniSensorGenericRadarWpmDmatAPI`, `OmniSensorAPI`,
+  `OmniSensorEncryptionAPI`, `OmniSensorGenericRadarWpmDmatScanCfgAPI:s001`
 
-**Bug 5 — MotionBVH not initialised in headless mode** (plugin calls `std::terminate()`):
-- [x] `run_headless.py` — set `/app/sensors/nv/radar/runWithoutMBVH = True` via `carb.settings`
-  right after carb import (NVIDIA provided this explicit bypass for headless environments)
+**Bug 5 — `IsaacSensorCreateRtxRadar` path renaming** (Replicator renames `/`-containing paths):
+- Root cause: Command strips leading `/` then calls `Tf.MakeValidIdentifier` on remainder; any path
+  with `/` separators (e.g. `World/Robot/RadarSensor`) becomes `World_Robot_RadarSensor`
+- [x] `launch_scene.py` `attach_radar_sensor` — use `path="/Radar"` + `parent=None`; compute absolute
+  world position from parent prim translation + mount offset
 
-**Result**: 120s simulation run exits cleanly (exit 0). No Fatal or Error messages. Radar plugin
-initialises. Remaining benign warning: `Material mapping not accessible` (affects per-material
-reflectivity weights; radar still produces detections using default surface properties).
+**Bug 6 — Wrong annotator** (`RtxSensorCpu` returns empty data for OmniRadar):
+- Root cause: `RtxSensorCpu` is a generic GPU readback annotator; OmniRadar uses `GenericModelOutput`
+- [x] `launch_scene.py` `setup_radar_annotator` — use `GenericModelOutput` annotator;
+  `render_vars=["GenericModelOutput","RtxSensorMetadata"]` in render product (both required)
+- [x] `run_headless.py` — updated `.get_data()` handling (returns `ndarray` uint8 bytes, not dict)
 
-**Remaining:**
-- [ ] Verify radar UDP packets arriving: start both containers + `nc -lu 10001` or ROS2 echo
-- [ ] Verify lidar ROS2 topic: `docker exec ros2-bridge ros2 topic echo /lidar/point_cloud`
+**Bug 7 — `runWithoutMBVH` bypass prevents data output**:
+- Root cause: `carb.settings.set("/app/sensors/nv/radar/runWithoutMBVH", True)` tells plugin to
+  skip MotionBVH entirely — but without BVH the ray tracer has no acceleration structure and emits
+  empty scans. Probe with `--/renderer/raytracingMotion/enabled=true` produced data at frame 3.
+- [x] `run_headless.py` — removed `runWithoutMBVH` bypass; pass
+  `extra_args=["--/renderer/raytracingMotion/enabled=true"]` to `SimulationApp` instead
+
+**Probe result (2026-03-07)**: `probe_radar.py` with `IsaacSensorCreateRtxRadar` + minimal scan attrs:
+- `first_nonzero_frame=3`, `len=52768` bytes consistently frames 3–59; EXIT:0 ✅
+
+**run_headless result (2026-03-07)**: 30s run, EXIT:0, `radar_ok=True`, but `empty=5200, udp_sent=0`
+- `get_data()` returns `ndarray len=0` every frame (annotator not receiving sensor output)
+- **Hypothesis**: `attach_radar_sensor` does not pass `omni:sensor:WpmDmat:scan:s001:*` kwargs to
+  `IsaacSensorCreateRtxRadar`; without these, `OmniSensorGenericRadarWpmDmatScanCfgAPI:s001` schema
+  may not be applied and the sensor has no scan profile to execute
+
+**Next:**
+- [ ] Pass scan config kwargs in `attach_radar_sensor` (same as probe's `minimal_attrs`, with
+  production values e.g. `rBins=64, maxRangeM=100, maxAzAngDeg=75`)
+- [ ] Verify `empty` count drops to 0 and `udp_sent` > 0 in run_headless 30s test
+- [ ] End-to-end: start ros2-bridge + `ros2 topic echo /radar/point_cloud`
 
 ---
 

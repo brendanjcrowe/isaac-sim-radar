@@ -68,17 +68,17 @@ args = parser.parse_args()
 # ── SimulationApp MUST be created before all omni.* imports ─────────────────
 from isaacsim import SimulationApp  # noqa: E402  (intentional late import)
 
-simulation_app = SimulationApp({"headless": True, "anti_aliasing": 0})
+# WpmDmatApprox radar requires MotionBVH (ray-tracing BVH for moving objects).
+# Pass this flag at startup so the RTX renderer initialises MotionBVH structures
+# before the OmniRadar plugin loads — without it the plugin crashes.
+simulation_app = SimulationApp({
+    "headless": True,
+    "anti_aliasing": 0,
+    "extra_args": ["--/renderer/raytracingMotion/enabled=true"],
+})
 
 # ── Safe to import omni.* now ───────────────────────────────────────────────
 import carb  # noqa: E402
-
-# WpmDmatApprox radar requires MotionBVH (ray-BVH for moving objects), which is
-# not initialised in headless mode.  NVIDIA provides this explicit bypass flag.
-# Without it the plugin calls std::terminate() when the first OmniRadar prim
-# is instantiated.  The bypass disables motion-blur-accurate multi-bounce traces
-# for dynamic objects but the static scene accuracy is unaffected.
-carb.settings.get_settings().set("/app/sensors/nv/radar/runWithoutMBVH", True)
 import omni.timeline  # noqa: E402
 import omni.usd  # noqa: E402
 from pxr import UsdGeom  # noqa: E402
@@ -126,6 +126,10 @@ robot_path = spawn_robot(stage)
 radar_path = attach_radar_sensor(stage, robot_path)
 lidar_path = attach_lidar_sensor(stage, robot_path)
 
+# Flush USD stage changes so sensor prims are visible to the RTX renderer
+# before the render product and annotator are created.
+simulation_app.update()
+
 # Set up radar annotator + UDP send socket
 radar_annotator = None
 _radar_sock = None
@@ -133,6 +137,7 @@ _radar_udp_addr = None
 
 if radar_path:
     radar_annotator = setup_radar_annotator(radar_path)
+    carb.log_warn(f"[diag] radar_annotator={radar_annotator!r}")
 
     _rdr_cfg = load_config("radar_params.yaml")
     _udp = _rdr_cfg.get("udp", {})
@@ -140,7 +145,7 @@ if radar_path:
     try:
         _radar_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         _radar_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-        carb.log_info(f"Radar UDP socket ready, sending to {_radar_udp_addr}")
+        carb.log_warn(f"[diag] Radar UDP socket ready, sending to {_radar_udp_addr}")
     except OSError as _e:
         carb.log_warn(f"Could not create radar UDP socket: {_e}")
 
@@ -163,20 +168,35 @@ carb.log_info("=== Simulation running — send SIGINT or SIGTERM to stop cleanly
 _LOG_EVERY = 100  # frames between status log lines
 start_time = time.time()
 frame = 0
+_udp_sent = 0
+_data_none_count = 0
+_data_empty_count = 0
 
 try:
     while simulation_app.is_running() and not _shutdown:
         simulation_app.update()
         frame += 1
 
-        # Send raw GMO bytes from OmniRadar annotator via UDP each frame
+        # Send raw GMO bytes from OmniRadar annotator via UDP each frame.
+        # GenericModelOutput annotator returns a numpy uint8 array (the raw GMO
+        # binary); use .tobytes() to get a proper bytes object for sendto().
         if radar_annotator is not None and _radar_sock is not None:
             _rdata = radar_annotator.get_data()
-            if _rdata is not None:
-                _raw = _rdata.get("data") if isinstance(_rdata, dict) else _rdata
-                if _raw is not None and len(_raw) > 0:
+            if _rdata is None:
+                _data_none_count += 1
+            else:
+                # Handle both dict (legacy) and numpy-array (GenericModelOutput) formats
+                if isinstance(_rdata, dict):
+                    _raw = _rdata.get("data")
+                else:
+                    _raw = _rdata
+                if _raw is None or len(_raw) == 0:
+                    _data_empty_count += 1
+                else:
                     try:
-                        _radar_sock.sendto(bytes(_raw), _radar_udp_addr)
+                        _raw_bytes = _raw.tobytes() if hasattr(_raw, "tobytes") else bytes(_raw)
+                        _radar_sock.sendto(_raw_bytes, _radar_udp_addr)
+                        _udp_sent += 1
                     except OSError:
                         pass
 
@@ -190,9 +210,10 @@ try:
             elapsed = time.time() - start_time
             radar_ok = bool(radar_path and stage.GetPrimAtPath(radar_path).IsValid())
             lidar_ok = bool(lidar_path and stage.GetPrimAtPath(lidar_path).IsValid())
-            carb.log_info(
+            carb.log_warn(
                 f"[frame {frame:6d} | {elapsed:8.1f}s"
-                f" | radar_ok={radar_ok} | lidar_ok={lidar_ok}]"
+                f" | radar_ok={radar_ok} | lidar_ok={lidar_ok}"
+                f" | udp_sent={_udp_sent} none={_data_none_count} empty={_data_empty_count}]"
             )
 
 finally:

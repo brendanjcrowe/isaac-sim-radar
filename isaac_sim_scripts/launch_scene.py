@@ -217,62 +217,61 @@ def spawn_robot(stage, robot_usd: str = ROBOT_USD):
 def attach_radar_sensor(stage, parent_path: str):
     """Create an RTX Radar sensor (OmniRadar prim) attached to the robot.
 
-    The correct Isaac Sim 5.x API for a WpmDMAT radar sensor is:
-      - prim type:  OmniRadar
-      - API schema: OmniSensorGenericRadarWpmDmatAPI
-        (from omni.usd.schema.omni_sensors extension)
+    Uses IsaacSensorCreateRtxRadar which applies all required schemas:
+      OmniSensorGenericRadarWpmDmatAPI, OmniSensorAPI, OmniSensorEncryptionAPI,
+      OmniSensorGenericRadarWpmDmatScanCfgAPI:s001
 
-    This schema sets omni:sensor:modelName = "RadarWPMDMAT", which registers
-    the correct RTX plugin. All sensor parameters (FOV, range, CFAR, etc.)
-    default from the schema — no JSON config file needed.
-
-    Do NOT use IsaacRtxRadarSensorAPI / sensorModelConfig / sensorModelPluginName:
-    those attributes are not read by the WpmDMAT plugin and leave it searching
-    for a missing default profile (Example_Rotary.json).
+    IMPORTANT: IsaacSensorCreateRtxRadar strips the leading "/" from the path
+    and renames any path containing "/" separators (e.g. World/Robot/RadarSensor
+    becomes World_Robot_RadarSensor via Tf.MakeValidIdentifier).  To avoid this,
+    use a top-level path "/Radar" with parent=None and position the sensor at
+    the absolute world coordinates (robot position + mount offset).
     """
     radar_config = load_config("radar_params.yaml")
-    radar_path = f"{parent_path}/RadarSensor"
+    radar_path = "/Radar"
+
+    # Compute absolute world position: parent prim translation + mount offset
+    mount = radar_config.get("mount_offset", {})
+    parent_prim = stage.GetPrimAtPath(parent_path)
+    parent_translate = Gf.Vec3d(0.0, 0.0, 0.0)
+    if parent_prim.IsValid():
+        xf = UsdGeom.Xformable(parent_prim)
+        ops = xf.GetOrderedXformOps()
+        for op in ops:
+            if op.GetOpType() == UsdGeom.XformOp.TypeTranslate:
+                v = op.Get()
+                parent_translate = Gf.Vec3d(v[0], v[1], v[2])
+                break
+    translation = Gf.Vec3d(
+        parent_translate[0] + mount.get("x", 0.3),
+        parent_translate[1] + mount.get("y", 0.0),
+        parent_translate[2] + mount.get("z", 0.4),
+    )
 
     try:
-        from pxr import Usd as _Usd
-
-        radar_prim = stage.DefinePrim(radar_path, "OmniRadar")
-
-        # Apply WpmDMAT radar API schema — registers the plugin and sets
-        # all omni:sensor:* defaults (modelName, tickRate, FOV, CFAR …)
-        schema_registry = _Usd.SchemaRegistry()
-        api_type = schema_registry.GetAPITypeFromSchemaTypeName(
-            "OmniSensorGenericRadarWpmDmatAPI"
+        success, sensor = omni.kit.commands.execute(
+            "IsaacSensorCreateRtxRadar",
+            path=radar_path,
+            parent=None,
+            translation=translation,
+            orientation=Gf.Quatd(1, 0, 0, 0),
         )
-        if api_type.isUnknown:
-            carb.log_error(
-                "OmniSensorGenericRadarWpmDmatAPI not found — "
-                "is omni.usd.schema.omni_sensors loaded?"
-            )
-            return None
-        radar_prim.ApplyAPI(api_type)
-
     except Exception as e:
-        carb.log_error(f"Failed to define OmniRadar prim: {e}")
+        carb.log_error(f"Failed to create RTX Radar sensor: {e}")
         return None
 
-    radar_prim = stage.GetPrimAtPath(radar_path)
-    if not radar_prim.IsValid():
-        carb.log_error(f"OmniRadar prim not valid after creation at {radar_path}")
+    if not success or sensor is None:
+        carb.log_error(
+            f"IsaacSensorCreateRtxRadar returned success={success}, sensor={sensor!r}"
+        )
         return None
 
-    # Apply mount offset from config
-    mount = radar_config.get("mount_offset", {})
-    xform = UsdGeom.Xformable(radar_prim)
-    xform.ClearXformOpOrder()
-    xform.AddTranslateOp().Set(Gf.Vec3d(
-        mount.get("x", 0.3),
-        mount.get("y", 0.0),
-        mount.get("z", 0.4),
-    ))
-
-    carb.log_info(f"RTX Radar sensor (WpmDMAT) created at {radar_path}")
-    return radar_path
+    actual_path = str(sensor.GetPath())
+    carb.log_info(
+        f"RTX Radar sensor (WpmDMAT) created at {actual_path} "
+        f"(position={translation})"
+    )
+    return actual_path
 
 
 def attach_lidar_sensor(stage, parent_path: str):
@@ -310,15 +309,20 @@ def attach_lidar_sensor(stage, parent_path: str):
 
 
 def setup_radar_annotator(radar_path: str):
-    """Attach a replicator annotator to the OmniRadar render product.
+    """Attach a replicator GenericModelOutput annotator to the OmniRadar prim.
 
-    Creates a RenderProduct for the OmniRadar prim and attaches an RtxSensorCpu
-    annotator. Call annotator.get_data() each simulation step to retrieve the
-    raw GenericModelOutput (GMO) binary produced by WpmDmatApproxRadar.
+    The correct pipeline for Isaac Sim 5.1 RTX radar data:
+      1. Look up the prim and use prim.GetPath() (SdfPath, not string) when
+         creating the render product — passing a string path causes Replicator
+         to strip the leading "/" and replace "/" with "_", breaking lookup.
+      2. render_vars=["GenericModelOutput"] is the correct render var for RTX
+         sensor data; "RtxSensorCpu" is a generic GPU readback var that returns
+         empty data when attached to an OmniRadar render product.
+      3. annotator.attach([render_product.path]) uses the render product's own
+         path string (not the prim path string, and not the render product object).
 
-    TranscoderRadar OmniGraph node is for physical radar hardware transcoding
-    (e.g. CONTINENTAL ARS430) and does not work for simulated OmniRadar prims.
-    Annotators are the correct Isaac Sim 5.x approach for simulated RTX sensors.
+    Call annotator.get_data() each frame to get the raw GMO numpy buffer.
+    Use isaacsim.sensors.rtx.get_gmo_data(buf) to parse the structured output.
 
     Returns:
         annotator handle, or None on failure.
@@ -326,10 +330,24 @@ def setup_radar_annotator(radar_path: str):
     try:
         import omni.replicator.core as rep
 
-        render_product = rep.create.render_product(radar_path, [1, 1])
-        annotator = rep.AnnotatorRegistry.get_annotator("RtxSensorCpu")
-        annotator.attach([render_product])
-        carb.log_info(f"Radar annotator attached to {radar_path}")
+        stage = omni.usd.get_context().get_stage()
+        radar_prim = stage.GetPrimAtPath(radar_path)
+        if not radar_prim.IsValid():
+            carb.log_error(f"setup_radar_annotator: prim not valid at {radar_path}")
+            return None
+
+        # Use SdfPath (not string) to avoid Replicator path-stripping bug.
+        # RtxSensorMetadata must be included alongside GenericModelOutput for
+        # the sensor pipeline to activate (matches NVIDIA's inspect_radar_metadata.py).
+        render_product = rep.create.render_product(
+            radar_prim.GetPath(),
+            [1, 1],
+            render_vars=["GenericModelOutput", "RtxSensorMetadata"],
+        )
+        annotator = rep.AnnotatorRegistry.get_annotator("GenericModelOutput")
+        annotator.attach([render_product.path])
+        carb.log_info(f"Radar GMO annotator attached to {radar_path} "
+                      f"(render_product={render_product.path})")
         return annotator
     except Exception as e:
         carb.log_warn(
