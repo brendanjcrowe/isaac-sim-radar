@@ -11,6 +11,19 @@ mount_offset:
   y: 0.0    # centered laterally
   z: 0.4    # height above base
 
+# Scan configuration — passed as omni:sensor:WpmDmat:scan:s001:* attrs to
+# IsaacSensorCreateRtxRadar.  These apply OmniSensorGenericRadarWpmDmatScanCfgAPI:s001,
+# which is required for the sensor to produce any output.
+scan:
+  rBins: 64           # range bins (max detectable range resolution)
+  vBins: 32           # Doppler velocity bins
+  azBins: 64          # azimuth angle bins
+  elBins: 4           # elevation angle bins
+  maxRangeM: 100.0    # max detection range (meters)
+  raysPerDeg: 2.0     # ray density (rays per degree of FOV)
+  maxAzAngDeg: 75.0   # half-FOV azimuth (±75° = 150° total)
+  maxElAngDeg: 10.0   # half-FOV elevation (±10° = 20° total)
+
 # UDP output — raw GMO bytes sent to this multicast address each simulation step
 udp:
   remote_ip: "239.0.0.1"

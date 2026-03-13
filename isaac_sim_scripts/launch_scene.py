@@ -248,6 +248,20 @@ def attach_radar_sensor(stage, parent_path: str):
         parent_translate[2] + mount.get("z", 0.4),
     )
 
+    # Build scan config kwargs from radar_params.yaml.
+    # These apply OmniSensorGenericRadarWpmDmatScanCfgAPI:s001 — without them
+    # the sensor has no scan profile and produces empty annotator data.
+    _scan = radar_config.get("scan", {})
+    _scan_defaults = {
+        "rBins": 64, "vBins": 32, "azBins": 64, "elBins": 4,
+        "maxRangeM": 100.0, "raysPerDeg": 2.0,
+        "maxAzAngDeg": 75.0, "maxElAngDeg": 10.0,
+    }
+    scan_kwargs = {
+        f"omni:sensor:WpmDmat:scan:s001:{k}": _scan.get(k, v)
+        for k, v in _scan_defaults.items()
+    }
+
     try:
         success, sensor = omni.kit.commands.execute(
             "IsaacSensorCreateRtxRadar",
@@ -255,6 +269,7 @@ def attach_radar_sensor(stage, parent_path: str):
             parent=None,
             translation=translation,
             orientation=Gf.Quatd(1, 0, 0, 0),
+            **scan_kwargs,
         )
     except Exception as e:
         carb.log_error(f"Failed to create RTX Radar sensor: {e}")

@@ -123,11 +123,20 @@ carb.log_info("=== Building urban scene ===")
 create_ground_plane(stage)
 create_urban_environment(stage)
 robot_path = spawn_robot(stage)
-radar_path = attach_radar_sensor(stage, robot_path)
+
+# Create lidar FIRST: IsaacSensorCreateRtxLidar may block for ~140s waiting
+# for the NVIDIA CDN (OS1 USD asset).  Creating the radar sensor AFTER the
+# CDN wait ensures it is initialized close to when its render_product is
+# created — if the radar prim exists for 140+ seconds before the render_product
+# is attached, the RTX plugin's internal state may expire.
 lidar_path = attach_lidar_sensor(stage, robot_path)
 
-# Flush USD stage changes so sensor prims are visible to the RTX renderer
-# before the render product and annotator are created.
+# Flush after the (possibly long) lidar CDN wait before creating the radar.
+simulation_app.update()
+
+radar_path = attach_radar_sensor(stage, robot_path)
+
+# Second flush: give the radar prim one render pass before attaching annotator.
 simulation_app.update()
 
 # Set up radar annotator + UDP send socket
