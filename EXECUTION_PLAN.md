@@ -300,17 +300,29 @@ and subsequent full `run_headless.py` runs.
 **Probe result (2026-03-07)**: `probe_radar.py` with `IsaacSensorCreateRtxRadar` + minimal scan attrs:
 - `first_nonzero_frame=3`, `len=52768` bytes consistently frames 3–59; EXIT:0 ✅
 
-**run_headless result (2026-03-07)**: 30s run, EXIT:0, `radar_ok=True`, but `empty=5200, udp_sent=0`
-- `get_data()` returns `ndarray len=0` every frame (annotator not receiving sensor output)
-- **Hypothesis**: `attach_radar_sensor` does not pass `omni:sensor:WpmDmat:scan:s001:*` kwargs to
-  `IsaacSensorCreateRtxRadar`; without these, `OmniSensorGenericRadarWpmDmatScanCfgAPI:s001` schema
-  may not be applied and the sensor has no scan profile to execute
+**Bug 8 — Radar sensor creation order / CDN blocking** (root cause of `empty=N`):
+- Root cause: `IsaacSensorCreateRtxLidar` blocks Python for ~140s while attempting to
+  load OS1 USD from NVIDIA CDN.  Radar prim was created BEFORE this wait, so the RTX
+  radar plugin's internal GPU state expired (140+ seconds without `simulation_app.update()`)
+  before the render product was attached.  Annotator returned `len=0` indefinitely.
+- Confirmed via bisect probes:
+  - `probe_extensions.py` (enable_extensions + simple scene) → `first_nonzero=3` ✅
+  - `probe_lidar.py` (lidar BEFORE radar, then update, then radar) → `first_nonzero=3` ✅
+  - `probe_prod_attrs.py` (production scan attrs, no lidar) → `first_nonzero=3` ✅
+- [x] `run_headless.py` — reordered: lidar → `simulation_app.update()` → radar →
+  `simulation_app.update()` → annotator
 
-**Next:**
-- [ ] Pass scan config kwargs in `attach_radar_sensor` (same as probe's `minimal_attrs`, with
-  production values e.g. `rBins=64, maxRangeM=100, maxAzAngDeg=75`)
-- [ ] Verify `empty` count drops to 0 and `udp_sent` > 0 in run_headless 30s test
+**Bug 9 — Missing scan config kwargs** (secondary; caused `empty=N` when scan config absent):
+- Root cause: without `omni:sensor:WpmDmat:scan:s001:*` kwargs, `IsaacSensorCreateRtxRadar`
+  does not apply `OmniSensorGenericRadarWpmDmatScanCfgAPI:s001` — sensor has no scan profile
+- [x] `config/radar_params.yaml` — `scan:` section added with production values
+- [x] `launch_scene.py` `attach_radar_sensor` — reads `scan` from yaml and passes kwargs
+
+**Result (2026-03-13)**: 30s run, EXIT:0, `udp_sent=2197, empty=3` (expected 3-frame warm-up) ✅
+
+**Remaining:**
 - [ ] End-to-end: start ros2-bridge + `ros2 topic echo /radar/point_cloud`
+- [ ] Verify lidar ROS2 topic: `docker exec ros2-bridge ros2 topic echo /lidar/point_cloud`
 
 ---
 
