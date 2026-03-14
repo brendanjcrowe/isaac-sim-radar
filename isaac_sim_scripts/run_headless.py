@@ -83,6 +83,8 @@ import omni.timeline  # noqa: E402
 import omni.usd  # noqa: E402
 from pxr import UsdGeom  # noqa: E402
 
+import numpy as np  # noqa: E402
+
 from enable_extensions import enable_extensions  # noqa: E402
 from launch_scene import (  # noqa: E402
     add_dynamic_objects,
@@ -113,6 +115,18 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # ── Enable extensions ────────────────────────────────────────────────────────
 carb.log_info("=== Isaac Sim Radar Runner: enabling extensions ===")
 enable_extensions()
+
+# get_gmo_data is provided by the isaacsim.sensors.rtx extension (loaded above).
+# It parses the raw OMGN bytes returned by the GenericModelOutput annotator into
+# a structured object with fields: x, y, z, scalar, velocities, numElements, etc.
+try:
+    from isaacsim.sensors.rtx import get_gmo_data as _get_gmo_data
+    _GMO_MAGIC = 0x4E474D4F  # 'OMGN' as little-endian uint32
+    carb.log_info("get_gmo_data available — will send structured RDR2 packets")
+except ImportError:
+    _get_gmo_data = None
+    _GMO_MAGIC = None
+    carb.log_warn("get_gmo_data not available — falling back to raw GMO bytes")
 
 # ── Build scene ──────────────────────────────────────────────────────────────
 stage = omni.usd.get_context().get_stage()
@@ -186,25 +200,76 @@ try:
         simulation_app.update()
         frame += 1
 
-        # Send raw GMO bytes from OmniRadar annotator via UDP each frame.
-        # GenericModelOutput annotator returns a numpy uint8 array (the raw GMO
-        # binary); use .tobytes() to get a proper bytes object for sendto().
+        # Parse GMO annotator data and send structured RDR2 packet via UDP.
+        #
+        # get_gmo_data() (from isaacsim.sensors.rtx) parses the raw OMGN bytes
+        # into a Python object; we then extract x/y/z/velocity/scalar and pack
+        # a simple RDR2 binary frame to avoid shipping OMGN internals over UDP.
+        #
+        # RDR2 wire format (little-endian):
+        #   Header  16 bytes: magic(4s) + num_detections(I) + timestamp_ns(Q)
+        #   Points  N * 24 bytes: [x, y, z, velocity, rcs, snr] each float32
+        #
+        # Falls back to raw OMGN bytes if get_gmo_data is unavailable.
         if radar_annotator is not None and _radar_sock is not None:
             _rdata = radar_annotator.get_data()
             if _rdata is None:
                 _data_none_count += 1
             else:
-                # Handle both dict (legacy) and numpy-array (GenericModelOutput) formats
-                if isinstance(_rdata, dict):
-                    _raw = _rdata.get("data")
-                else:
-                    _raw = _rdata
+                _raw = _rdata.get("data") if isinstance(_rdata, dict) else _rdata
                 if _raw is None or len(_raw) == 0:
                     _data_empty_count += 1
-                else:
+                elif _get_gmo_data is not None:
                     try:
-                        _raw_bytes = _raw.tobytes() if hasattr(_raw, "tobytes") else bytes(_raw)
-                        _radar_sock.sendto(_raw_bytes, _radar_udp_addr)
+                        gmo = _get_gmo_data(_raw)
+                        if gmo is None or gmo.magicNumber != _GMO_MAGIC:
+                            _data_empty_count += 1
+                        elif gmo.numElements == 0:
+                            _data_empty_count += 1
+                        else:
+                            n = int(gmo.numElements)
+                            ts = int(gmo.timestampNs) if gmo.timestampNs is not None else 0
+
+                            # Log first valid frame so we can inspect field shapes
+                            if _udp_sent == 0:
+                                carb.log_warn(f"[GMO first frame] numElements={n}")
+                                for _attr in ("x", "y", "z", "scalar", "velocities"):
+                                    _v = getattr(gmo, _attr, None)
+                                    _sh = _v.shape if hasattr(_v, "shape") else type(_v).__name__
+                                    _s = _v[:3] if hasattr(_v, "__len__") and len(_v) >= 3 else _v
+                                    carb.log_warn(f"  gmo.{_attr}: shape={_sh} sample={_s}")
+
+                            x = np.asarray(gmo.x, dtype=np.float32)
+                            y = np.asarray(gmo.y, dtype=np.float32)
+                            z = np.asarray(gmo.z, dtype=np.float32)
+                            rcs = (np.asarray(gmo.scalar, dtype=np.float32)
+                                   if gmo.scalar is not None else np.zeros(n, np.float32))
+
+                            vel_raw = gmo.velocities
+                            if vel_raw is not None:
+                                vel = np.asarray(vel_raw, dtype=np.float32)
+                                # velocities may be (N, 3); take radial (x-component)
+                                velocity = vel[:, 0] if vel.ndim == 2 else vel
+                            else:
+                                velocity = np.zeros(n, np.float32)
+
+                            snr = np.zeros(n, np.float32)
+
+                            header = struct.pack("<4sIQ", b"RDR2", n, ts)
+                            points = np.column_stack(
+                                [x, y, z, velocity, rcs, snr]
+                            ).astype(np.float32).tobytes()
+                            _radar_sock.sendto(header + points, _radar_udp_addr)
+                            _udp_sent += 1
+                    except OSError:
+                        pass
+                else:
+                    # Fallback: send raw OMGN bytes (udp_listener will fail to parse but won't crash)
+                    try:
+                        _radar_sock.sendto(
+                            _raw.tobytes() if hasattr(_raw, "tobytes") else bytes(_raw),
+                            _radar_udp_addr,
+                        )
                         _udp_sent += 1
                     except OSError:
                         pass

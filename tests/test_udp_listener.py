@@ -1,4 +1,4 @@
-"""Tests for the UDP listener and GenericModelOutput parser."""
+"""Tests for the UDP listener and RDR2 packet parser."""
 
 import struct
 import socket
@@ -23,19 +23,9 @@ from radar_bridge.udp_listener import (
 )
 
 
-def build_packet(sensor_id=1, timestamp_ns=1000000, num_detections=5,
-                 sensor_pos=(1.0, 2.0, 3.0)):
-    """Build a mock GenericModelOutput binary packet."""
-    header = struct.pack(
-        HEADER_FORMAT,
-        HEADER_MAGIC,       # magic
-        1,                  # version
-        sensor_id,
-        timestamp_ns,
-        sensor_pos[0], sensor_pos[1], sensor_pos[2],
-        num_detections,
-        0,                  # reserved
-    )
+def build_packet(timestamp_ns=1000000, num_detections=5):
+    """Build a mock RDR2 binary packet."""
+    header = struct.pack(HEADER_FORMAT, HEADER_MAGIC, num_detections, timestamp_ns)
 
     detections = b""
     for i in range(num_detections):
@@ -45,14 +35,8 @@ def build_packet(sensor_id=1, timestamp_ns=1000000, num_detections=5,
             float(i * 0.5),     # y
             0.4,                # z
             1.5 + i * 0.1,      # velocity
-            float(i + 1),       # range
-            0.1 * i,            # azimuth
-            0.05,               # elevation
             -10.0 + i,          # rcs
             15.0 + i * 2,       # snr
-            -80.0,              # noise_floor
-            0.0,                # reserved1
-            0.0,                # reserved2
         )
         detections += det
 
@@ -62,22 +46,18 @@ def build_packet(sensor_id=1, timestamp_ns=1000000, num_detections=5,
 class TestPacketParsing(unittest.TestCase):
 
     def test_header_size(self):
-        self.assertEqual(HEADER_SIZE, 40)
+        self.assertEqual(HEADER_SIZE, 16)
 
     def test_detection_size(self):
-        self.assertEqual(DETECTION_SIZE, 48)
+        self.assertEqual(DETECTION_SIZE, 24)
 
     def test_parse_valid_packet(self):
-        packet = build_packet(sensor_id=42, timestamp_ns=999, num_detections=3)
+        packet = build_packet(timestamp_ns=999, num_detections=3)
         frame = parse_generic_model_output(packet)
 
         self.assertIsNotNone(frame)
-        self.assertEqual(frame.sensor_id, 42)
         self.assertEqual(frame.timestamp_ns, 999)
         self.assertEqual(frame.num_detections, 3)
-        self.assertAlmostEqual(frame.sensor_position[0], 1.0)
-        self.assertAlmostEqual(frame.sensor_position[1], 2.0)
-        self.assertAlmostEqual(frame.sensor_position[2], 3.0)
 
     def test_detection_values(self):
         packet = build_packet(num_detections=4)
@@ -103,28 +83,22 @@ class TestPacketParsing(unittest.TestCase):
         frame = parse_generic_model_output(b"\x00" * 10)
         self.assertIsNone(frame)
 
+    def test_bad_magic_returns_none(self):
+        """Unknown magic → returns None (no fallback parser)."""
+        bad_header = struct.pack("<4sIQ", b"XXXX", 1, 0)
+        det = struct.pack(DETECTION_FORMAT, *([1.0] * 6))
+        frame = parse_generic_model_output(bad_header + det)
+        self.assertIsNone(frame)
+
     def test_truncated_detections(self):
         """Packet claims 10 detections but only has data for 3."""
-        header = struct.pack(
-            HEADER_FORMAT,
-            HEADER_MAGIC, 1, 1, 0, 0.0, 0.0, 0.0, 10, 0,
-        )
-        # Only 3 detections worth of data
+        header = struct.pack(HEADER_FORMAT, HEADER_MAGIC, 10, 0)
         det_data = b"\x00" * (DETECTION_SIZE * 3)
         packet = header + det_data
 
         frame = parse_generic_model_output(packet)
         self.assertIsNotNone(frame)
         self.assertEqual(frame.num_detections, 3)
-
-    def test_bad_magic_falls_back_to_flat(self):
-        """Unknown magic → fallback flat parser."""
-        # Create raw detection data with no header
-        det_data = struct.pack(DETECTION_FORMAT, *([1.0] * 12))
-        frame = parse_generic_model_output(det_data)
-
-        self.assertIsNotNone(frame)
-        self.assertEqual(frame.num_detections, 1)
 
     def test_large_frame(self):
         packet = build_packet(num_detections=500)
@@ -142,15 +116,13 @@ class TestUDPSocket(unittest.TestCase):
         """Send a mock packet via UDP and receive it."""
         port = 19999  # Use a high port to avoid conflicts
 
-        # Create a simple unicast socket instead of multicast for testing
         recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         recv_sock.bind(("127.0.0.1", port))
         recv_sock.settimeout(2.0)
 
-        packet = build_packet(sensor_id=7, num_detections=10)
+        packet = build_packet(num_detections=10)
 
-        # Send from another thread
         def send():
             time.sleep(0.1)
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -166,7 +138,6 @@ class TestUDPSocket(unittest.TestCase):
 
         frame = parse_generic_model_output(data)
         self.assertIsNotNone(frame)
-        self.assertEqual(frame.sensor_id, 7)
         self.assertEqual(frame.num_detections, 10)
 
 
