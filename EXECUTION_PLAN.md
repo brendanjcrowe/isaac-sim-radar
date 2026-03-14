@@ -353,6 +353,34 @@ functional. Fix in a future step: implement proper GMO binary format parser.
 `/lidar/point_cloud` not currently publishing. Root cause: `setup_lidar_ros2_publisher`
 may need the render product created before the OmniGraph node is attached. Deferred.
 
+### 16g. GMO Format Reverse-Engineering — In Progress (2026-03-13)
+
+Started reverse-engineering the actual NVIDIA OMGN binary format from captured packets.
+
+**Confirmed OMGN wire format (outer header, 32 bytes):**
+```
+Offset  Size  Type    Value / Notes
+------  ----  ------  ----------------------------------
+0x00    4     char[4] "OMGN" — magic (ASCII, not uint32)
+0x04    4     uint32  version = 1
+0x08    8     uint64  0 (sensor_id? reserved?)
+0x10    8     uint64  data_offset = 560 (0x230) — byte offset where channel data begins
+0x18    8     uint64  num_channels = 14 — number of output channels
+```
+
+**Channel descriptor region**: bytes 32–559 (528 bytes, 14 channels, ~37.7 bytes each — not cleanly divisible; format not yet understood).
+
+**Data section**: bytes 560–52767 = 52208 bytes = 13052 float32 values.
+
+**Fill value**: `0x40404040` = float32 3.0039 — "no detection at this bin" sentinel.
+
+**Values observed**: negative dB values (~−10 to −12) followed by large zero regions. Consistent with a sparse range-Doppler-angle output with most bins empty.
+
+**Next steps for GMO parser:**
+- [ ] Decode the 14-channel descriptor format (find channel name strings and per-channel offsets/sizes)
+- [ ] Map channel indices to radar fields (range, azimuth, elevation, doppler, RCS, SNR)
+- [ ] Alternatively: parse the data inside Isaac Sim and send a simple custom format over UDP (avoids needing to parse OMGN on the ROS2 side)
+
 ---
 
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
