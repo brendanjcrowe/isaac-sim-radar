@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-03-13
-> **Status**: Step 16e complete — End-to-end verified: /radar/point_cloud publishing at 100 Hz, 1099 detections/frame
+> **Last Updated**: 2026-03-14
+> **Status**: Step 16h complete — RDR2 wire format: real Cartesian detections (13–15/frame) at ~97 Hz ✅
 
 ---
 
@@ -353,33 +353,35 @@ functional. Fix in a future step: implement proper GMO binary format parser.
 `/lidar/point_cloud` not currently publishing. Root cause: `setup_lidar_ros2_publisher`
 may need the render product created before the OmniGraph node is attached. Deferred.
 
-### 16g. GMO Format Reverse-Engineering — In Progress (2026-03-13)
+### 16g. GMO Format Reverse-Engineering — Superseded (2026-03-13)
 
 Started reverse-engineering the actual NVIDIA OMGN binary format from captured packets.
+Chose Path 2 instead: parse inside Isaac Sim with official `get_gmo_data()` API and send a
+simple RDR2 custom format over UDP. This eliminates the need to parse OMGN on the ROS2 side.
 
-**Confirmed OMGN wire format (outer header, 32 bytes):**
-```
-Offset  Size  Type    Value / Notes
-------  ----  ------  ----------------------------------
-0x00    4     char[4] "OMGN" — magic (ASCII, not uint32)
-0x04    4     uint32  version = 1
-0x08    8     uint64  0 (sensor_id? reserved?)
-0x10    8     uint64  data_offset = 560 (0x230) — byte offset where channel data begins
-0x18    8     uint64  num_channels = 14 — number of output channels
-```
+### 16h. RDR2 Wire Format + Real Cartesian Detections — Complete (2026-03-14)
 
-**Channel descriptor region**: bytes 32–559 (528 bytes, 14 channels, ~37.7 bytes each — not cleanly divisible; format not yet understood).
+**Problem**: udp_listener.py was producing 1099 garbage detections from raw OMGN bytes
+(52768-byte payload interpreted as 48-byte structs in a flat fallback parser).
 
-**Data section**: bytes 560–52767 = 52208 bytes = 13052 float32 values.
+**Solution**: In-sim GMO parsing via `isaacsim.sensors.rtx.get_gmo_data()` + RDR2 custom wire format.
 
-**Fill value**: `0x40404040` = float32 3.0039 — "no detection at this bin" sentinel.
+**RDR2 wire format** (little-endian):
+- Header 16 bytes: `magic(b'RDR2', 4s) + num_detections(I) + timestamp_ns(Q)`
+- Per detection 24 bytes: `[x, y, z, velocity, rcs, snr]` each float32
+- OmniRadar returns spherical coords (az_deg, el_deg, range_m); converted to Cartesian before send
 
-**Values observed**: negative dB values (~−10 to −12) followed by large zero regions. Consistent with a sparse range-Doppler-angle output with most bins empty.
+**Key bugs fixed**:
+- `struct` not imported in run_headless.py → `NameError` on every frame (caught, silently dropped)
+- `except OSError: pass` would not catch `RuntimeError` from `gmo.velocities` C extension →
+  crash propagated to finally block → 9s crash loop; fixed: `except Exception as _exc`
+- `rm -f /tmp/.X99-lock` in entrypoint.sh prevents Xvfb failure on `docker restart`
 
-**Next steps for GMO parser:**
-- [ ] Decode the 14-channel descriptor format (find channel name strings and per-channel offsets/sizes)
-- [ ] Map channel indices to radar fields (range, azimuth, elevation, doppler, RCS, SNR)
-- [ ] Alternatively: parse the data inside Isaac Sim and send a simple custom format over UDP (avoids needing to parse OMGN on the ROS2 side)
+**Verified (2026-03-14)**:
+- `udp_sent=10897 none=0 empty=3` at frame 10900 (~120s) — stable, no crash ✅
+- `/radar/point_cloud` at 97 Hz, 13–15 real CFAR detections/frame, point_step=24 ✅
+- Detections match scene geometry (pillars 8–10m, buildings 22–41m) ✅
+- All 19 unit+integration tests pass ✅
 
 ---
 

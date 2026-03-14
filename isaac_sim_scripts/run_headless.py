@@ -21,6 +21,7 @@ import argparse
 import os
 import signal
 import socket
+import struct
 import sys
 import time
 
@@ -230,25 +231,40 @@ try:
                             n = int(gmo.numElements)
                             ts = int(gmo.timestampNs) if gmo.timestampNs is not None else 0
 
-                            # Log first valid frame so we can inspect field shapes
+                            # Log first valid frame — confirm coord type and all field values.
+                            # OmniRadar WpmDmatApprox outputs spherical coords:
+                            #   gmo.x = azimuth (deg), gmo.y = elevation (deg), gmo.z = range (m)
                             if _udp_sent == 0:
                                 carb.log_warn(f"[GMO first frame] numElements={n}")
-                                for _attr in ("x", "y", "z", "scalar", "velocities"):
+                                for _attr in ("x", "y", "z", "scalar", "velocities",
+                                              "elementsCoordsType", "frameOfReference"):
                                     _v = getattr(gmo, _attr, None)
                                     _sh = _v.shape if hasattr(_v, "shape") else type(_v).__name__
                                     _s = _v[:3] if hasattr(_v, "__len__") and len(_v) >= 3 else _v
                                     carb.log_warn(f"  gmo.{_attr}: shape={_sh} sample={_s}")
+                                # Print all detection coords for sanity check
+                                carb.log_warn("  All detections (az_deg, el_deg, range_m, scalar):")
+                                for _i in range(n):
+                                    carb.log_warn(
+                                        f"    [{_i:2d}] az={gmo.x[_i]:8.3f} el={gmo.y[_i]:7.3f}"
+                                        f" r={gmo.z[_i]:7.3f} rcs={gmo.scalar[_i]:7.3f}"
+                                    )
 
-                            x = np.asarray(gmo.x, dtype=np.float32)
-                            y = np.asarray(gmo.y, dtype=np.float32)
-                            z = np.asarray(gmo.z, dtype=np.float32)
+                            # Convert spherical (az_deg, el_deg, range_m) → Cartesian (x, y, z)
+                            # in the sensor frame (x=forward, y=left, z=up).
+                            az_rad = np.deg2rad(np.asarray(gmo.x, dtype=np.float64))
+                            el_rad = np.deg2rad(np.asarray(gmo.y, dtype=np.float64))
+                            r = np.asarray(gmo.z, dtype=np.float64)
+                            cart_x = (r * np.cos(el_rad) * np.cos(az_rad)).astype(np.float32)
+                            cart_y = (r * np.cos(el_rad) * np.sin(az_rad)).astype(np.float32)
+                            cart_z = (r * np.sin(el_rad)).astype(np.float32)
+
                             rcs = (np.asarray(gmo.scalar, dtype=np.float32)
                                    if gmo.scalar is not None else np.zeros(n, np.float32))
 
                             vel_raw = gmo.velocities
-                            if vel_raw is not None:
+                            if vel_raw is not None and len(vel_raw) == n:
                                 vel = np.asarray(vel_raw, dtype=np.float32)
-                                # velocities may be (N, 3); take radial (x-component)
                                 velocity = vel[:, 0] if vel.ndim == 2 else vel
                             else:
                                 velocity = np.zeros(n, np.float32)
@@ -257,12 +273,12 @@ try:
 
                             header = struct.pack("<4sIQ", b"RDR2", n, ts)
                             points = np.column_stack(
-                                [x, y, z, velocity, rcs, snr]
+                                [cart_x, cart_y, cart_z, velocity, rcs, snr]
                             ).astype(np.float32).tobytes()
                             _radar_sock.sendto(header + points, _radar_udp_addr)
                             _udp_sent += 1
-                    except OSError:
-                        pass
+                    except Exception as _exc:
+                        carb.log_warn(f"[radar UDP send error] {type(_exc).__name__}: {_exc}")
                 else:
                     # Fallback: send raw OMGN bytes (udp_listener will fail to parse but won't crash)
                     try:
@@ -271,8 +287,8 @@ try:
                             _radar_udp_addr,
                         )
                         _udp_sent += 1
-                    except OSError:
-                        pass
+                    except Exception as _exc:
+                        carb.log_warn(f"[radar UDP fallback send error] {type(_exc).__name__}: {_exc}")
 
         # Duration-based exit
         if args.duration > 0.0 and (time.time() - start_time) >= args.duration:

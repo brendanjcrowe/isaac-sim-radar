@@ -18,6 +18,9 @@ fi
 if [ -z "${DISPLAY}" ] && command -v Xvfb >/dev/null 2>&1; then
     DISPLAY=:99
     export DISPLAY
+    # Remove stale lock file left by a previous container run (docker restart
+    # preserves /tmp in the container's writable layer, so the old lock survives).
+    rm -f /tmp/.X99-lock
     Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
     XVFB_PID=$!
     # Wait up to 10s for the display to become ready
