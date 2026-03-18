@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-03-14
-> **Status**: Step 16h complete — RDR2 wire format: real Cartesian detections (13–15/frame) at ~97 Hz ✅
+> **Last Updated**: 2026-03-18
+> **Status**: M2 complete — radar data visible in RViz2: 13–16 CFAR detections/frame at 97 Hz ✅
 
 ---
 
@@ -388,7 +388,7 @@ simple RDR2 custom format over UDP. This eliminates the need to parse OMGN on th
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
 
 - [~] **M1**: Urban scene geometry + headless runner complete in code; runtime verification pending (Step 10b)
-- [ ] **M2**: Radar data visible in RViz2
+- [x] **M2**: Radar data visible in RViz2 — 13–16 real CFAR detections/frame at 97 Hz, OpenGL 4.5 ✅
 - [ ] **M3**: LiDAR data visible, side-by-side with radar
 - [ ] **M4**: Recorded bags, offline comparison metrics
 - [ ] **M5**: Analysis report (coverage, accuracy, detection density)

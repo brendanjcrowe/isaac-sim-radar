@@ -24,8 +24,9 @@ if [ -z "$NGC_API_KEY" ] && ! grep -q "nvcr.io" ~/.docker/config.json 2>/dev/nul
     echo "Run: docker login nvcr.io --username '\$oauthtoken' --password <NGC_API_KEY>"
 fi
 
-# Allow X11 forwarding for RViz
+# Allow X11 forwarding for RViz (containers run as root, so need +local:root)
 if command -v xhost &>/dev/null; then
+    xhost +local:root 2>/dev/null || true
     xhost +local:docker 2>/dev/null || true
 fi
 
