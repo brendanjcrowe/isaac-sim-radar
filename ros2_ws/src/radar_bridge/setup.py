@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "radar_to_ros2 = radar_bridge.radar_to_ros2:main",
+            "lidar_to_ros2 = radar_bridge.lidar_to_ros2:main",
         ],
     },
 )

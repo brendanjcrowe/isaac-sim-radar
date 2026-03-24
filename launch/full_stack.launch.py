@@ -28,9 +28,18 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        # --- Radar bridge ---
+        # --- Radar bridge (RDR2 UDP → /radar/point_cloud) ---
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(radar_bridge_launch),
+        ),
+
+        # --- Lidar bridge (LDR2 UDP → /lidar/point_cloud) ---
+        Node(
+            package="radar_bridge",
+            executable="lidar_to_ros2",
+            name="lidar_to_ros2",
+            parameters=[{"multicast_group": "239.0.0.1", "port": 10002}],
+            output="screen",
         ),
 
         # --- Static TF: map → odom ---

@@ -290,28 +290,36 @@ def attach_radar_sensor(stage, parent_path: str):
 
 
 def attach_lidar_sensor(stage, parent_path: str):
-    """Create an RTX Lidar sensor attached to the robot."""
+    """Create an RTX Lidar sensor attached to the robot.
+
+    Returns the path to the actual OmniLidar sensor prim (not the parent Xform).
+    IsaacSensorCreateRtxLidar creates:
+      <parent_path>/LidarSensor        — Xform (for mount offset)
+      <parent_path>/LidarSensor/sensor — OmniLidar prim (actual sensor)
+
+    The OmniLidar path is what rep.create.render_product() and ROS2RtxLidarHelper need.
+    """
     lidar_config = load_config("lidar_params.yaml")
-    lidar_path = f"{parent_path}/LidarSensor"
+    lidar_xform_path = f"{parent_path}/LidarSensor"
 
     # config="OS1" matches the USD at /Isaac/Sensors/Ouster/OS1/OS1.usd on NVIDIA's CDN.
     # variant selects the specific emitter layout within that USD.
     # Isaac Sim resolves get_assets_root_path() to NVIDIA's public CDN — no local Nucleus needed.
-    omni.kit.commands.execute(
+    _, sensor_prim = omni.kit.commands.execute(
         "IsaacSensorCreateRtxLidar",
-        path=lidar_path,
+        path=lidar_xform_path,
         config=lidar_config.get("config", "OS1"),
         variant=lidar_config.get("variant", "OS1_REV7_128ch10hz1024res"),
     )
 
-    lidar_prim = stage.GetPrimAtPath(lidar_path)
-    if not lidar_prim.IsValid():
+    xform_prim = stage.GetPrimAtPath(lidar_xform_path)
+    if not xform_prim.IsValid():
         carb.log_error("Failed to create RTX Lidar sensor")
         return None
 
-    # Apply mount offset
+    # Apply mount offset to the Xform parent
     mount = lidar_config.get("mount_offset", {})
-    xform = UsdGeom.Xformable(lidar_prim)
+    xform = UsdGeom.Xformable(xform_prim)
     xform.ClearXformOpOrder()
     xform.AddTranslateOp().Set(Gf.Vec3d(
         mount.get("x", 0.0),
@@ -319,8 +327,21 @@ def attach_lidar_sensor(stage, parent_path: str):
         mount.get("z", 0.5),
     ))
 
-    carb.log_info(f"RTX Lidar sensor created at {lidar_path}")
-    return lidar_path
+    # Return the OmniLidar sensor prim path (required by rep.create.render_product)
+    if sensor_prim is not None and sensor_prim.IsValid():
+        sensor_path = str(sensor_prim.GetPath())
+    else:
+        # Fallback: sensor child is always named 'sensor'
+        sensor_path = lidar_xform_path + "/sensor"
+        if not stage.GetPrimAtPath(sensor_path).IsValid():
+            carb.log_warn(
+                f"OmniLidar prim not found at {sensor_path}; "
+                "setup_lidar_ros2_publisher may fail"
+            )
+            sensor_path = lidar_xform_path
+
+    carb.log_info(f"RTX Lidar sensor created at {sensor_path}")
+    return sensor_path
 
 
 def setup_radar_annotator(radar_path: str):
@@ -372,45 +393,47 @@ def setup_radar_annotator(radar_path: str):
         return None
 
 
-def setup_lidar_ros2_publisher(stage, lidar_path: str):
-    """Configure OmniGraph to publish LiDAR data to ROS2."""
-    lidar_config = load_config("lidar_params.yaml")
-    graph_path = "/World/LidarROS2Graph"
+def setup_lidar_ros2_publisher(stage, lidar_sensor_path: str):
+    """Attach a GenericModelOutput annotator to the OmniLidar prim's render product.
+
+    The OmniGraph-based ROS2RtxLidarHelper approach (IsaacCreateRTXLidarScanBuffer)
+    does not successfully receive data from the OS1 CDN lidar model — the scan buffer
+    annotator returns no data even though the render product IS producing OMGN bytes
+    (confirmed by GenericModelOutput annotator getting data on every frame).
+
+    Instead, we use the same pipeline as radar:
+      1. Create a render product on the OmniLidar prim with GenericModelOutput.
+      2. Attach a GenericModelOutput annotator.
+      3. In the Python update loop, call get_gmo_data() and send LDR2 UDP packets.
+      4. The ros2-bridge UDP listener publishes PointCloud2 on /lidar/point_cloud.
+
+    Returns the GenericModelOutput annotator, or None on failure.
+    """
+    import omni.replicator.core as rep
+
+    sensor_prim = stage.GetPrimAtPath(lidar_sensor_path)
+    if not sensor_prim.IsValid():
+        carb.log_error(
+            f"setup_lidar_annotator: OmniLidar prim not valid at {lidar_sensor_path}"
+        )
+        return None
+
+    lidar_rp = rep.create.render_product(
+        sensor_prim.GetPath(),
+        resolution=(1, 1),
+        render_vars=["GenericModelOutput", "RtxSensorMetadata"],
+    )
+    lidar_rp_path = lidar_rp.path
+    carb.log_info(f"LiDAR render product created: {lidar_rp_path}")
 
     try:
-        import omni.graph.core as og
-
-        keys = og.Controller.Keys
-        (graph, nodes, _, _) = og.Controller.edit(
-            {"graph_path": graph_path, "evaluator_name": "push"},
-            {
-                keys.CREATE_NODES: [
-                    ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
-                    ("RenderProduct", "isaacsim.core.nodes.IsaacCreateRenderProduct"),
-                    ("ROS2Publisher", "isaacsim.ros2.bridge.ROS2RtxLidarHelper"),
-                ],
-                keys.CONNECT: [
-                    ("OnPlaybackTick.outputs:tick", "RenderProduct.inputs:execIn"),
-                    ("RenderProduct.outputs:execOut", "ROS2Publisher.inputs:execIn"),
-                    ("RenderProduct.outputs:renderProductPath",
-                     "ROS2Publisher.inputs:renderProductPath"),
-                ],
-                keys.SET_VALUES: [
-                    ("RenderProduct.inputs:cameraPrim", lidar_path),
-                    ("ROS2Publisher.inputs:topicName",
-                     lidar_config.get("ros2_topic", "/lidar/point_cloud")),
-                    ("ROS2Publisher.inputs:frameId",
-                     lidar_config.get("frame_id", "lidar_link")),
-                    ("ROS2Publisher.inputs:type", "point_cloud"),
-                ],
-            },
-        )
-        carb.log_info(f"LiDAR ROS2 publisher graph created at {graph_path}")
-    except Exception as e:
-        carb.log_warn(
-            f"Could not create LiDAR ROS2 graph ({e}). "
-            "Use Tools > Robotics > ROS2 OmniGraphs > RTX LiDAR instead."
-        )
+        ann = rep.AnnotatorRegistry.get_annotator("GenericModelOutput")
+        ann.attach([lidar_rp_path])
+        carb.log_info(f"LiDAR GenericModelOutput annotator attached to {lidar_rp_path}")
+        return ann
+    except Exception as _e:
+        carb.log_warn(f"LiDAR GenericModelOutput annotator failed: {_e}")
+        return None
 
 
 # ── Scenario Variations ────────────────────────────────────────────────────

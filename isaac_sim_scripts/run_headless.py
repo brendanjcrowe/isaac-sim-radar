@@ -95,7 +95,7 @@ from launch_scene import (  # noqa: E402
     create_ground_plane,
     create_urban_environment,
     load_config,
-    setup_lidar_ros2_publisher,
+    setup_lidar_ros2_publisher as setup_lidar_annotator,
     setup_radar_annotator,
     spawn_robot,
 )
@@ -173,10 +173,29 @@ if radar_path:
     except OSError as _e:
         carb.log_warn(f"Could not create radar UDP socket: {_e}")
 
+# Set up lidar annotator + UDP send socket (same pipeline as radar)
+lidar_annotator = None
+_lidar_sock = None
+_lidar_udp_addr = None
+_lidar_udp_sent = 0
+
 if lidar_path and not args.no_ros2:
-    setup_lidar_ros2_publisher(stage, lidar_path)
+    lidar_annotator = setup_lidar_annotator(stage, lidar_path)
+    if lidar_annotator is not None:
+        _ldr_cfg = load_config("lidar_params.yaml")
+        _ludp = _ldr_cfg.get("udp", {})
+        _lidar_udp_addr = (
+            _ludp.get("remote_ip", "239.0.0.1"),
+            int(_ludp.get("remote_port", 10002)),
+        )
+        try:
+            _lidar_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            _lidar_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            carb.log_warn(f"[diag] Lidar UDP socket ready, sending to {_lidar_udp_addr}")
+        except OSError as _e:
+            carb.log_warn(f"Could not create lidar UDP socket: {_e}")
 elif args.no_ros2:
-    carb.log_info("--no-ros2: skipping LiDAR ROS2 publisher")
+    carb.log_info("--no-ros2: skipping LiDAR annotator")
 
 if args.weather != "clear":
     add_weather_effects(stage, weather_type=args.weather, fog_preset=args.fog_preset)
@@ -195,6 +214,7 @@ frame = 0
 _udp_sent = 0
 _data_none_count = 0
 _data_empty_count = 0
+_lidar_empty = 0   # frames where lidar annotator returned empty data
 
 try:
     while simulation_app.is_running() and not _shutdown:
@@ -295,15 +315,107 @@ try:
             carb.log_info(f"--duration {args.duration:.1f}s reached — stopping")
             break
 
+        # Parse lidar GMO data and send LDR2 UDP packet to ros2-bridge.
+        # LDR2 wire format is identical to RDR2 (same struct, different magic):
+        #   Header  16 bytes: magic(b'LDR2') + num_points(I) + timestamp_ns(Q)
+        #   Points  N * 24 bytes: [x, y, z, intensity, 0, 0] each float32
+        # OmniLidar OMGN data may be Cartesian (direct xyz) or spherical;
+        # log elementsCoordsType on first frame to determine conversion needed.
+        if lidar_annotator is not None and _lidar_sock is not None and _get_gmo_data is not None:
+            try:
+                _ldata = lidar_annotator.get_data()
+                _lraw = _ldata.get("data") if isinstance(_ldata, dict) else _ldata
+                if _lraw is None or len(_lraw) == 0:
+                    _lidar_empty += 1
+                else:
+                    lgmo = _get_gmo_data(_lraw)
+                    if lgmo is None or lgmo.magicNumber != _GMO_MAGIC or lgmo.numElements == 0:
+                        _lidar_empty += 1
+                    else:
+                        ln = int(lgmo.numElements)
+                        lts = int(lgmo.timestampNs) if lgmo.timestampNs is not None else 0
+
+                        # Log first valid lidar frame to confirm coord type
+                        if _lidar_udp_sent == 0:
+                            carb.log_warn(
+                                f"[lidar GMO first frame] numElements={ln} "
+                                f"coordsType={lgmo.elementsCoordsType} "
+                                f"frame={lgmo.frameOfReference}"
+                            )
+                            carb.log_warn(
+                                f"  x[:3]={np.asarray(lgmo.x)[:3]} "
+                                f"y[:3]={np.asarray(lgmo.y)[:3]} "
+                                f"z[:3]={np.asarray(lgmo.z)[:3]}"
+                            )
+
+                        # OmniLidar OMGN format: check elementsCoordsType.
+                        # If SPHERICAL: x=az_deg, y=el_deg, z=range_m → convert.
+                        # If CARTESIAN: x,y,z are already in sensor frame.
+                        _lx = np.asarray(lgmo.x, dtype=np.float64)
+                        _ly = np.asarray(lgmo.y, dtype=np.float64)
+                        _lz = np.asarray(lgmo.z, dtype=np.float64)
+                        try:
+                            from isaacsim.sensors.rtx import CoordsType
+                            _is_spherical = (lgmo.elementsCoordsType == CoordsType.SPHERICAL)
+                        except Exception:
+                            _is_spherical = False  # assume Cartesian if can't check
+
+                        if _is_spherical:
+                            _az_r = np.deg2rad(_lx)
+                            _el_r = np.deg2rad(_ly)
+                            _r = _lz
+                            lx32 = (_r * np.cos(_el_r) * np.cos(_az_r)).astype(np.float32)
+                            ly32 = (_r * np.cos(_el_r) * np.sin(_az_r)).astype(np.float32)
+                            lz32 = (_r * np.sin(_el_r)).astype(np.float32)
+                        else:
+                            lx32 = _lx.astype(np.float32)
+                            ly32 = _ly.astype(np.float32)
+                            lz32 = _lz.astype(np.float32)
+
+                        lint = (np.asarray(lgmo.scalar, dtype=np.float32)
+                                if lgmo.scalar is not None else np.zeros(ln, np.float32))
+                        lzero = np.zeros(ln, np.float32)
+                        all_points = np.column_stack(
+                            [lx32, ly32, lz32, lint, lzero, lzero]
+                        ).astype(np.float32)
+                        # Filter out zero-range points (invalid returns)
+                        # _lz holds range_m (spherical) or z (cartesian)
+                        if _is_spherical:
+                            valid_mask = (_lz != 0.0)
+                        else:
+                            valid_mask = (np.sqrt(_lx**2 + _ly**2 + _lz**2) > 0.01)
+                        all_points = all_points[valid_mask]
+                        n_valid = len(all_points)
+                        # Chunk into UDP-safe packets (~2700 pts × 24B = 64800B < 65507B limit)
+                        _MAX_PTS_PER_PKT = 2700
+                        for _chunk_start in range(0, max(n_valid, 1), _MAX_PTS_PER_PKT):
+                            _chunk = all_points[_chunk_start: _chunk_start + _MAX_PTS_PER_PKT]
+                            _cn = len(_chunk)
+                            if _cn == 0:
+                                break
+                            lheader = struct.pack("<4sIQ", b"LDR2", _cn, lts)
+                            _lidar_sock.sendto(lheader + _chunk.tobytes(), _lidar_udp_addr)
+                        _lidar_udp_sent += 1
+                        if _lidar_udp_sent == 1:
+                            _n_pkts = max(1, (n_valid + _MAX_PTS_PER_PKT - 1) // _MAX_PTS_PER_PKT)
+                            carb.log_warn(
+                                f"[lidar UDP] first frame: {ln} raw, {n_valid} valid pts"
+                                f" → {_n_pkts} UDP packets"
+                            )
+            except Exception as _lexc:
+                carb.log_warn(f"[lidar UDP send error] {type(_lexc).__name__}: {_lexc}")
+
         # Periodic status line
         if frame % _LOG_EVERY == 0:
             elapsed = time.time() - start_time
             radar_ok = bool(radar_path and stage.GetPrimAtPath(radar_path).IsValid())
+            # lidar_path is now the OmniLidar sensor prim path (.../LidarSensor/sensor)
             lidar_ok = bool(lidar_path and stage.GetPrimAtPath(lidar_path).IsValid())
             carb.log_warn(
                 f"[frame {frame:6d} | {elapsed:8.1f}s"
                 f" | radar_ok={radar_ok} | lidar_ok={lidar_ok}"
-                f" | udp_sent={_udp_sent} none={_data_none_count} empty={_data_empty_count}]"
+                f" | udp_sent={_udp_sent} none={_data_none_count} empty={_data_empty_count}"
+                f" | lidar_udp={_lidar_udp_sent} lidar_empty={_lidar_empty}]"
             )
 
 finally:

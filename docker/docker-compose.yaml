@@ -14,6 +14,7 @@ services:
       - ACCEPT_EULA=Y
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/app/config/fastdds_localhost.xml
     volumes:
       # Bind mounts for live development
       - ../isaac_sim_scripts:/app/isaac_sim_scripts
@@ -46,6 +47,7 @@ services:
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - DISPLAY=${DISPLAY}
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/app/config/fastdds_localhost.xml
     volumes:
       # Bind mounts for live development
       - ../ros2_ws/src:/app/ros2_ws/src

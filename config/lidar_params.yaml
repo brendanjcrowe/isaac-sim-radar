@@ -16,3 +16,9 @@ mount_offset:
 # ROS2 output
 ros2_topic: "/lidar/point_cloud"
 frame_id: "lidar_link"
+
+# UDP output — parsed GMO bytes sent as LDR2 packets to ros2-bridge
+udp:
+  remote_ip: "239.0.0.1"
+  remote_port: 10002
+  interface_ip: "0.0.0.0"
