@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-03-18
-> **Status**: M2 complete — radar data visible in RViz2: 13–16 CFAR detections/frame at 97 Hz ✅
+> **Last Updated**: 2026-03-20
+> **Status**: M3 complete — radar + lidar visible side-by-side in RViz2 ✅
 
 ---
 
@@ -383,14 +383,109 @@ simple RDR2 custom format over UDP. This eliminates the need to parse OMGN on th
 - Detections match scene geometry (pillars 8–10m, buildings 22–41m) ✅
 - All 19 unit+integration tests pass ✅
 
+### 16i. LDR2 Wire Format + LiDAR in RViz2 — Complete (2026-03-20) (M3)
+
+**Problem**: LiDAR topic `/lidar/point_cloud` advertised but no messages delivered. Multiple
+approaches tried and failed:
+- OmniGraph `ROS2RtxLidarHelper` + correct OmniLidar prim path → topic advertised, no data
+- `IsaacCreateRTXLidarScanBuffer` (fullScan=True) → scan buffer never populated
+- `RtxSensorCpu` annotator → always empty (same as radar)
+
+However, `GenericModelOutput` annotator returns valid OMGN data on 9997/10000 frames —
+the lidar sensor works fine, only the OmniGraph scan buffer pipeline is broken for OS1 CDN model.
+
+**Solution**: Same pipeline as radar — bypass OmniGraph, use `get_gmo_data()` + custom LDR2 UDP.
+
+**LDR2 wire format** (identical structure to RDR2):
+- Header 16 bytes: `magic(b'LDR2', 4s) + num_points(I) + timestamp_ns(Q)`
+- Per point 24 bytes: `[x, y, z, intensity, 0, 0]` each float32
+- OmniLidar returns SPHERICAL coords (confirmed: `elementsCoordsType=CoordsType.SPHERICAL`)
+- Zero-range points filtered (invalid returns / sky hits)
+
+**UDP chunking** (OS1-128 produces ~43,776 pts/frame = ~1 MB):
+- Max safe UDP payload: 65,507 bytes → 2700 pts/packet (2700×24 + 16 = 64,816 bytes)
+- Each frame split into ~17 LDR2 packets; receiver publishes each as separate PointCloud2
+- RViz2 decay time accumulates chunks into complete scan visualization
+
+**Key bugs fixed**:
+- `OSError: [Errno 90] Message too long` — 43,776 pts × 24 bytes exceeds UDP 64K limit;
+  fixed with chunked sends (2700 pts/packet)
+- `attach_lidar_sensor` returned Xform path instead of OmniLidar prim path (`path + "/sensor"`)
+- `xhost +local:root` required for RViz2 (Docker containers run as root)
+
+**New files**:
+- `ros2_ws/src/radar_bridge/radar_bridge/lidar_to_ros2.py` — LDR2 UDP → PointCloud2 publisher
+- `config/lidar_params.yaml` — lidar UDP settings (multicast 239.0.0.1:10002)
+- `launch/full_stack.launch.py` — added `lidar_to_ros2` node
+
+**Verified (2026-03-20)**:
+- Isaac Sim: `lidar_udp=192097` sustained, `lidar_empty=3` (3-frame warm-up) ✅
+- ros2-bridge: `Published 401800 lidar scans (latest: 2700 pts)` at ~97 Hz ✅
+- Both `/radar/point_cloud` and `/lidar/point_cloud` visible in RViz2 side-by-side ✅
+
+### 16j. Localhost UDP + DDS Fix (2026-03-24)
+
+ROS2 DDS multicast and custom radar/lidar UDP multicast (239.0.0.1) were flooding the
+home network, causing internet disconnects. Fixed by switching everything to localhost:
+
+- `config/fastdds_localhost.xml` — restricts DDS discovery to `127.0.0.1` loopback
+- `FASTRTPS_DEFAULT_PROFILES_FILE` env var set in both containers in docker-compose.yaml
+- Radar/lidar UDP changed from multicast `239.0.0.1` to unicast `127.0.0.1`
+- `create_multicast_socket()` updated to handle both multicast and unicast addresses
+- All config defaults updated across YAML, ROS2 params, launch file, tests
+- Works because both containers use `network_mode: host` (shared loopback)
+
+---
+
+## Step 17: M4 — Recorded Bags + Offline Analysis — In Progress (2026-03-24)
+
+### 17a. Bag Recording ✅
+
+Recorded 60s bag with both topics:
+```
+bags/comparison_run_001/
+  6 × .db3 files, 1.3 GiB total
+  Duration: 314.7s
+  /radar/point_cloud: 25,853 messages
+  /lidar/point_cloud: 31,473 messages
+  /tf_static: 3 messages
+```
+
+### 17b. Analysis Pipeline Fixes — In Progress
+
+**Fixed**:
+- `_parse_lidar_cloud()` in `run_analysis.py` — replaced fragile per-column byte extraction
+  loop (broken on NumPy 2.x) with simple `np.frombuffer().reshape()` approach
+- `compare_clouds.py` — `except Exception` for open3d import (crashes with `AttributeError`
+  due to NumPy 2.x / scipy incompatibility in the container)
+- `compare_clouds.py` — added lidar subsampling (500K max) + pure-numpy brute-force fallback
+  for when both open3d and scipy are broken
+
+**Remaining issues**:
+- open3d import crashes at module level (NumPy 2.x incompatibility with scipy/sklearn transitive deps)
+- scipy also broken for same reason → both KDTree implementations unavailable
+- Pure-numpy brute-force fallback works but is very slow for 355K radar × 500K lidar points
+  (100% CPU, 6.5 GB RAM, likely needs 10+ minutes)
+- Needs either: (a) `pip install scipy --upgrade` in container to get NumPy 2.x-compatible scipy,
+  or (b) reduce bag size / subsample more aggressively, or (c) install a lightweight KDTree
+  (e.g. `pykdtree`) that supports NumPy 2.x
+
+### 17c. Next Steps
+
+1. Fix scipy in ros2-bridge container (`pip install --upgrade scipy` or pin in Dockerfile)
+2. Re-run analysis on the recorded bag
+3. Run `radar_analysis/sensor_fusion.py` for per-frame fusion metrics
+4. Run `radar_analysis/radar_map.py` for occupancy grid comparison
+5. Update EXECUTION_PLAN.md with results
+
 ---
 
 ## Remaining Project Milestones (from PROJECT_PLAN.md)
 
-- [~] **M1**: Urban scene geometry + headless runner complete in code; runtime verification pending (Step 10b)
-- [x] **M2**: Radar data visible in RViz2 — 13–16 real CFAR detections/frame at 97 Hz, OpenGL 4.5 ✅
-- [ ] **M3**: LiDAR data visible, side-by-side with radar
-- [ ] **M4**: Recorded bags, offline comparison metrics
+- [x] **M1**: Urban scene geometry + headless runner — runtime verified ✅
+- [x] **M2**: Radar data visible in RViz2 — 13–16 real CFAR detections/frame at 97 Hz ✅
+- [x] **M3**: LiDAR data visible side-by-side with radar — OS1-128, ~43,776 pts/frame, 97 Hz ✅
+- [~] **M4**: Bag recorded (1.3 GiB, 314s); analysis blocked on scipy/numpy compat
 - [ ] **M5**: Analysis report (coverage, accuracy, detection density)
 - [ ] **M6**: Material-aware radar tuning
 - [ ] **M7**: Final documentation and reproducibility

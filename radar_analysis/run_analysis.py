@@ -64,14 +64,8 @@ def _parse_lidar_cloud(msg) -> np.ndarray:
         return np.empty((0, 3), dtype=np.float32)
     raw = bytes(msg.data)
     step = msg.point_step
-    # Vectorised extraction of x, y, z using strides
-    view = np.frombuffer(raw, dtype=np.uint8)
-    xyz = np.empty((n, 3), dtype=np.float32)
-    for col, offset in enumerate((0, 4, 8)):
-        col_bytes = np.array([view[i * step + offset: i * step + offset + 4].tobytes()
-                               for i in range(n)])
-        xyz[:, col] = np.frombuffer(b"".join(col_bytes.tolist()), dtype=np.float32)
-    return xyz
+    buf = np.frombuffer(raw, dtype=np.float32).reshape(n, step // 4)
+    return buf[:, :3].copy()
 
 
 def read_bag(bag_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

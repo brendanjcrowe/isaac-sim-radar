@@ -10,36 +10,59 @@ import numpy as np
 
 try:
     import open3d as o3d
-except ImportError:
+except Exception:
     o3d = None
 
 
-def compute_distances(source_points: np.ndarray, target_points: np.ndarray) -> np.ndarray:
+def compute_distances(source_points: np.ndarray, target_points: np.ndarray,
+                      max_target_pts: int = 500_000) -> np.ndarray:
     """Compute nearest-neighbor distances from source to target.
 
     Args:
         source_points: (N, 3) array
         target_points: (M, 3) array
+        max_target_pts: subsample target if larger (avoids OOM on 85M+ lidar points)
 
     Returns:
         (N,) array of distances to nearest target point
     """
-    if o3d is None:
-        # Fallback: brute force (slow for large clouds)
+    # Subsample target if too large for KDTree
+    if len(target_points) > max_target_pts:
+        idx = np.random.default_rng(42).choice(
+            len(target_points), max_target_pts, replace=False
+        )
+        target_points = target_points[idx]
+
+    # Try open3d first, then scipy, then pure-numpy chunked brute force
+    if o3d is not None:
+        target_pcd = o3d.geometry.PointCloud()
+        target_pcd.points = o3d.utility.Vector3dVector(target_points)
+        tree = o3d.geometry.KDTreeFlann(target_pcd)
+        distances = np.zeros(len(source_points))
+        for i, pt in enumerate(source_points):
+            _, _, d2 = tree.search_knn_vector_3d(pt, 1)
+            distances[i] = np.sqrt(d2[0])
+        return distances
+
+    try:
         from scipy.spatial import KDTree
         tree = KDTree(target_points)
         distances, _ = tree.query(source_points)
         return distances
+    except (ImportError, ValueError):
+        pass
 
-    target_pcd = o3d.geometry.PointCloud()
-    target_pcd.points = o3d.utility.Vector3dVector(target_points)
-    tree = o3d.geometry.KDTreeFlann(target_pcd)
-
-    distances = np.zeros(len(source_points))
-    for i, pt in enumerate(source_points):
-        _, _, d2 = tree.search_knn_vector_3d(pt, 1)
-        distances[i] = np.sqrt(d2[0])
-
+    # Pure-numpy fallback: chunked brute-force
+    distances = np.full(len(source_points), np.inf, dtype=np.float64)
+    chunk = 5000
+    for i in range(0, len(source_points), chunk):
+        src = source_points[i:i + chunk]  # (C, 3)
+        # Compute distances to all target points in chunks to limit memory
+        for j in range(0, len(target_points), 50000):
+            tgt = target_points[j:j + 50000]  # (T, 3)
+            d = np.linalg.norm(src[:, None, :] - tgt[None, :, :], axis=2)  # (C, T)
+            min_d = d.min(axis=1)
+            distances[i:i + chunk] = np.minimum(distances[i:i + chunk], min_d)
     return distances
 
 

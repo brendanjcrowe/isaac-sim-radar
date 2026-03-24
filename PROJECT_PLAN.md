@@ -2,7 +2,7 @@
 
 > **Status**: Active / Living Document
 > **Created**: 2026-02-13
-> **Last Updated**: 2026-03-05
+> **Last Updated**: 2026-03-20
 > **Isaac Sim Version**: 5.1.0
 > **Deployment**: Docker (multi-container)
 
@@ -71,25 +71,23 @@ Extensions are enabled programmatically via `isaac_sim_scripts/enable_extensions
 
 > Replaced by Docker on 2026-02-23. Native install (Omniverse Launcher + host ROS2 Jazzy) had driver version conflicts between Isaac Sim 5.x (requires 580+) and the host system (535.288). Docker isolates this cleanly. Host ROS2 Jazzy install retained for local debugging.
 
-### 0.6 Known Issue — RTX Radar Crash in Isaac Sim 5.1 Headless **[ACTIVE — FIX IN PROGRESS]**
+### 0.6 Known Issue — RTX Radar Crash in Isaac Sim 5.1 Headless **[RESOLVED]**
 
-> **Identified**: 2026-03-05
+> **Identified**: 2026-03-05 | **Resolved**: 2026-03-14
 
 Both NVIDIA RTX radar model plugins (`wpm_dmatapprox`, `dmatapprox`) crash during
 `carbOnPluginPreStartup` when Isaac Sim 5.1 is launched headless via `python.sh`.
 The carb interfaces they depend on (`IMaterialReaderFactory`, `IProfileReaderFactory`)
 are not yet registered when plugin startup runs in the `python.sh` launch path.
 
-This is an **NVIDIA regression in Isaac Sim 5.1** — not a bug in this project's code.
+**Fix applied**: Manual Xvfb virtual framebuffer startup in `docker/isaac-sim/entrypoint.sh`
+(not `xvfb-run -a`, which hangs in Docker due to SIGUSR1 delivery issues). This changes the
+carb plugin initialization order so all required interfaces are registered before the radar
+plugins start. See EXECUTION_PLAN.md Step 16c for details.
 
-**Chosen fix**: Run Isaac Sim under `xvfb-run -a` (Xvfb virtual framebuffer). This
-changes the carb plugin initialization order so all required interfaces are registered
-before the radar plugins start. NVIDIA's documentation recommends `xvfb-run` for
-headless simulation with RTX sensor features. See EXECUTION_PLAN.md Step 16 for details.
-
-**Note**: A physics-raycasting fallback was prototyped and discarded. Material-aware
-multi-bounce WPM simulation is the core purpose of using Isaac Sim; synthetic raycasts
-defeat that purpose.
+Additional data pipeline bugs were discovered and fixed during runtime verification
+(Steps 16d–16i): sensor creation order, prim path handling, annotator selection, wire
+format design, and UDP chunking. Full details in EXECUTION_PLAN.md.
 
 ---
 
@@ -189,20 +187,22 @@ Isaac Sim ships with **no built-in city/urban outdoor environments**. The bundle
 
 ## Phase 3 — Data Pipeline & ROS2 Integration
 
-### 3.1 Radar Data Pipeline
+### 3.1 Radar Data Pipeline **[IMPLEMENTED — Custom UDP]**
 
-The radar extension outputs via the **TranscoderRadar** OmniGraph node (`omni.sensors.nv.radar.TranscoderRadar`), encoding detections into UDP packets in GenericModelOutput format:
+> **Updated 2026-03-14**: `TranscoderRadar` OmniGraph node is for physical hardware (e.g.,
+> CONTINENTAL ARS430) only — does not work with simulated RTX radar. Custom pipeline used instead.
 
 ```
 [isaac-sim container]
-RTX Radar Sensor → GPU Compute → TranscoderRadar → UDP multicast (239.0.0.1:10001)
-                                                          ↓ (host network)
+RTX Radar (WpmDmatApproxRadar) → GenericModelOutput annotator → get_gmo_data() → RDR2 UDP (239.0.0.1:10001)
+                                                                                     ↓ (host network)
 [ros2-bridge container]
-UDP listener → parse GenericModelOutput → ROS2 PointCloud2
+udp_listener.py → parse RDR2 → ROS2 PointCloud2 on /radar/point_cloud
 ```
 
-- Configure `remoteIP`, `remotePort`, `interfaceIP` on the TranscoderRadar node
-- Optionally write to binary file via the `fileName` attribute for offline analysis
+- OmniRadar returns SPHERICAL coords (az_deg, el_deg, range_m); converted to Cartesian in-sim
+- RDR2 wire format: 16-byte header + 24 bytes per detection (x, y, z, velocity, rcs, snr)
+- 13–16 CFAR detections per frame at 97 Hz
 
 ### 3.2 Radar-to-ROS2 Bridge (Custom — Required) **[IMPLEMENTED]**
 
@@ -219,13 +219,23 @@ The radar extension does **not** natively publish to ROS2 topics. A bridge node 
 **Approach 2 — Isaac Sim Python scripting [ALTERNATIVE]**:
 - Read radar output buffers directly via the Isaac Sim Python API and publish via `rclpy`
 
-### 3.3 LiDAR Data Pipeline (Native ROS2 Support)
+### 3.3 LiDAR Data Pipeline **[IMPLEMENTED — Custom UDP]**
 
-LiDAR has native ROS2 support in Isaac Sim:
-- Use **Tools > Robotics > ROS2 OmniGraphs > RTX LiDAR** for automatic publishing
-- Publishes `sensor_msgs/PointCloud2` on `/lidar/point_cloud`
-- Publishes `sensor_msgs/LaserScan` if configured
-- Configured in `isaac_sim_scripts/launch_scene.py` via OmniGraph
+> **Updated 2026-03-20**: Isaac Sim's native OmniGraph `ROS2RtxLidarHelper` does not work
+> for the OS1 CDN-based lidar model (`IsaacCreateRTXLidarScanBuffer` never populates).
+> LiDAR uses the same custom pipeline as radar.
+
+```
+[isaac-sim container]
+RTX Lidar (OS1-128) → GenericModelOutput annotator → get_gmo_data() → LDR2 UDP (239.0.0.1:10002)
+                                                                          ↓ (host network)
+[ros2-bridge container]
+lidar_to_ros2.py → parse LDR2 → ROS2 PointCloud2 on /lidar/point_cloud
+```
+
+- OmniLidar returns ~43,776 points/frame (SPHERICAL coords); converted to Cartesian in-sim
+- UDP packets chunked to 2700 pts each (OS1-128 full scan exceeds 64K UDP limit)
+- `lidar_to_ros2` node in `ros2_ws/src/radar_bridge/` receives LDR2 and publishes PointCloud2
 
 ### 3.4 Frame / TF Configuration
 
@@ -321,10 +331,10 @@ radar_analysis/
 
 | Milestone | Deliverable | Status |
 |---|---|---|
-| **M0** | Docker infrastructure operational (both containers start, GPU works) | `CODE COMPLETE` — awaiting NGC auth + GPU for runtime verification |
-| **M1** | Isaac Sim running with urban scene, robot spawned and controllable | `CODE COMPLETE` — scene geometry + sensors implemented; runtime pending Step 12 headless runner |
-| **M2** | Radar + LiDAR sensors mounted and producing data | `TODO` — requires Step 10b (container runtime) |
-| **M3** | ROS2 bridge operational — radar & lidar point clouds visible in RViz2 | `TODO` |
+| **M0** | Docker infrastructure operational (both containers start, GPU works) | ✅ COMPLETE |
+| **M1** | Isaac Sim running with urban scene, robot spawned and controllable | ✅ COMPLETE — runtime verified |
+| **M2** | Radar data visible in RViz2 | ✅ COMPLETE — 13–16 CFAR detections/frame at 97 Hz |
+| **M3** | ROS2 bridge operational — radar & lidar point clouds visible in RViz2 | ✅ COMPLETE — both topics at 97 Hz, side-by-side in RViz2 |
 | **M4** | Offline analysis scripts producing comparison plots | `CODE COMPLETE` — `run_analysis.py` tested with synthetic data; awaiting real bag files |
 | **M5** | LiDAR SLAM map generated, radar map generated, comparison complete | `TODO` |
 | **M6** | Sensor fusion pipeline operational | `TODO` |
