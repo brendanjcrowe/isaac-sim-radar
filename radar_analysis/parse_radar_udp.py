@@ -21,7 +21,7 @@ from radar_bridge.udp_listener import (
 
 def main():
     parser = argparse.ArgumentParser(description="Capture and display radar UDP data")
-    parser.add_argument("--group", default="239.0.0.1", help="Multicast group")
+    parser.add_argument("--group", default="127.0.0.1", help="UDP address (localhost or multicast)")
     parser.add_argument("--port", type=int, default=10001, help="UDP port")
     parser.add_argument("--duration", type=float, default=10.0, help="Capture duration (seconds)")
     args = parser.parse_args()

@@ -99,23 +99,28 @@ def parse_generic_model_output(data: bytes) -> Optional[RadarFrame]:
 
 
 def create_multicast_socket(
-    multicast_group: str = "239.0.0.1",
+    multicast_group: str = "127.0.0.1",
     port: int = 10001,
     interface: str = "0.0.0.0",
     timeout: float = 0.1,
 ) -> socket.socket:
-    """Create and bind a UDP multicast socket for receiving radar data."""
+    """Create and bind a UDP socket for receiving radar/lidar data.
+
+    Supports both multicast (239.x.x.x) and unicast (127.0.0.1) addresses.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("", port))
 
-    # Join multicast group
-    mreq = struct.pack(
-        "4s4s",
-        socket.inet_aton(multicast_group),
-        socket.inet_aton(interface),
-    )
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    # Only join multicast group if address is actually multicast (224.0.0.0/4)
+    first_octet = int(multicast_group.split(".")[0])
+    if 224 <= first_octet <= 239:
+        mreq = struct.pack(
+            "4s4s",
+            socket.inet_aton(multicast_group),
+            socket.inet_aton(interface),
+        )
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     sock.settimeout(timeout)
 
     return sock

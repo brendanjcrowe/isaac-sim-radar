@@ -38,7 +38,7 @@ def generate_launch_description():
             package="radar_bridge",
             executable="lidar_to_ros2",
             name="lidar_to_ros2",
-            parameters=[{"multicast_group": "239.0.0.1", "port": 10002}],
+            parameters=[{"multicast_group": "127.0.0.1", "port": 10002}],
             output="screen",
         ),
 

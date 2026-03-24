@@ -67,7 +67,7 @@ class LidarToRos2Node(Node):
     def __init__(self):
         super().__init__("lidar_to_ros2")
 
-        self.declare_parameter("multicast_group", "239.0.0.1")
+        self.declare_parameter("multicast_group", "127.0.0.1")
         self.declare_parameter("port", 10002)
         self.declare_parameter("interface", "0.0.0.0")
         self.declare_parameter("frame_id", "lidar_link")

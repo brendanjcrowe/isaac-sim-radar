@@ -43,7 +43,7 @@ class RadarToRos2Node(Node):
         super().__init__("radar_to_ros2")
 
         # Declare parameters
-        self.declare_parameter("multicast_group", "239.0.0.1")
+        self.declare_parameter("multicast_group", "127.0.0.1")
         self.declare_parameter("port", 10001)
         self.declare_parameter("interface", "0.0.0.0")
         self.declare_parameter("frame_id", "radar_link")

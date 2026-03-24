@@ -26,6 +26,6 @@ scan:
 
 # UDP output — raw GMO bytes sent to this multicast address each simulation step
 udp:
-  remote_ip: "239.0.0.1"
+  remote_ip: "127.0.0.1"
   remote_port: 10001
   interface_ip: "0.0.0.0"

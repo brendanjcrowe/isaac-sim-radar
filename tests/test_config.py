@@ -49,7 +49,7 @@ class TestConfigFiles(unittest.TestCase):
         with open(path) as f:
             cfg = yaml.safe_load(f)
         params = cfg["radar_to_ros2"]["ros__parameters"]
-        self.assertEqual(params["multicast_group"], "239.0.0.1")
+        self.assertEqual(params["multicast_group"], "127.0.0.1")
         self.assertEqual(params["port"], 10001)
         self.assertEqual(params["frame_id"], "radar_link")
 

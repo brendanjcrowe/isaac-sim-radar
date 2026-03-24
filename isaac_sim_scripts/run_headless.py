@@ -165,10 +165,9 @@ if radar_path:
 
     _rdr_cfg = load_config("radar_params.yaml")
     _udp = _rdr_cfg.get("udp", {})
-    _radar_udp_addr = (_udp.get("remote_ip", "239.0.0.1"), int(_udp.get("remote_port", 10001)))
+    _radar_udp_addr = (_udp.get("remote_ip", "127.0.0.1"), int(_udp.get("remote_port", 10001)))
     try:
         _radar_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        _radar_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
         carb.log_warn(f"[diag] Radar UDP socket ready, sending to {_radar_udp_addr}")
     except OSError as _e:
         carb.log_warn(f"Could not create radar UDP socket: {_e}")
@@ -185,12 +184,11 @@ if lidar_path and not args.no_ros2:
         _ldr_cfg = load_config("lidar_params.yaml")
         _ludp = _ldr_cfg.get("udp", {})
         _lidar_udp_addr = (
-            _ludp.get("remote_ip", "239.0.0.1"),
+            _ludp.get("remote_ip", "127.0.0.1"),
             int(_ludp.get("remote_port", 10002)),
         )
         try:
             _lidar_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            _lidar_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
             carb.log_warn(f"[diag] Lidar UDP socket ready, sending to {_lidar_udp_addr}")
         except OSError as _e:
             carb.log_warn(f"Could not create lidar UDP socket: {_e}")

@@ -1,7 +1,7 @@
 radar_to_ros2:
   ros__parameters:
-    # UDP multicast settings (must match TranscoderRadar OmniGraph node)
-    multicast_group: "239.0.0.1"
+    # UDP settings — localhost (both containers share host network)
+    multicast_group: "127.0.0.1"
     port: 10001
     interface: "0.0.0.0"
 
