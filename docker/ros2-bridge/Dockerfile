@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt scipy
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && \
+    pip3 install --no-cache-dir --upgrade scipy
 
 COPY ros2_ws/ /app/ros2_ws/
 COPY radar_analysis/ /app/radar_analysis/

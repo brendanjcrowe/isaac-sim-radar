@@ -1,5 +1,7 @@
 """Visualization utilities for radar vs LiDAR comparison."""
 
+import matplotlib
+matplotlib.use("Agg")  # headless — no GUI window needed
 import numpy as np
 import matplotlib.pyplot as plt
 

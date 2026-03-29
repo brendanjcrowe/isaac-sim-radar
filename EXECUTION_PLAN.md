@@ -437,21 +437,21 @@ home network, causing internet disconnects. Fixed by switching everything to loc
 
 ---
 
-## Step 17: M4 — Recorded Bags + Offline Analysis — In Progress (2026-03-24)
+## Step 17: M4 — Recorded Bags + Offline Analysis ✅ (2026-03-29)
 
 ### 17a. Bag Recording ✅
 
-Recorded 60s bag with both topics:
+Recorded bag with both topics:
 ```
 bags/comparison_run_001/
   6 × .db3 files, 1.3 GiB total
   Duration: 314.7s
-  /radar/point_cloud: 25,853 messages
-  /lidar/point_cloud: 31,473 messages
+  /radar/point_cloud: 25,853 messages (13–15 detections each)
+  /lidar/point_cloud: 31,473 messages (2,700 pts each, chunked from ~43,776/frame)
   /tf_static: 3 messages
 ```
 
-### 17b. Analysis Pipeline Fixes — In Progress
+### 17b. Analysis Pipeline Fixes ✅
 
 **Fixed**:
 - `_parse_lidar_cloud()` in `run_analysis.py` — replaced fragile per-column byte extraction
@@ -459,24 +459,40 @@ bags/comparison_run_001/
 - `compare_clouds.py` — `except Exception` for open3d import (crashes with `AttributeError`
   due to NumPy 2.x / scipy incompatibility in the container)
 - `compare_clouds.py` — added lidar subsampling (500K max) + pure-numpy brute-force fallback
-  for when both open3d and scipy are broken
+- `visualize.py` — force `matplotlib.use("Agg")` for headless rendering
+- `sensor_fusion.py`, `radar_map.py` — updated `rosbags.serde.deserialize_cdr` import to
+  `rosbags.typesys` API (changed in newer rosbags versions)
+- `docker/ros2-bridge/Dockerfile` — `pip install --upgrade scipy` for NumPy 2.x compat
 
-**Remaining issues**:
-- open3d import crashes at module level (NumPy 2.x incompatibility with scipy/sklearn transitive deps)
-- scipy also broken for same reason → both KDTree implementations unavailable
-- Pure-numpy brute-force fallback works but is very slow for 355K radar × 500K lidar points
-  (100% CPU, 6.5 GB RAM, likely needs 10+ minutes)
-- Needs either: (a) `pip install scipy --upgrade` in container to get NumPy 2.x-compatible scipy,
-  or (b) reduce bag size / subsample more aggressively, or (c) install a lightweight KDTree
-  (e.g. `pykdtree`) that supports NumPy 2.x
+### 17c. Analysis Results ✅
 
-### 17c. Next Steps
+**run_analysis.py** — aggregate comparison:
+```
+Radar detections:     355,616
+LiDAR points:         84,913,380
+Mean radar→LiDAR:     0.657 m
+Median radar→LiDAR:   0.406 m
+Max radar→LiDAR:      6.144 m
+Coverage (≤0.5 m):    65.3%
+```
+Output: `analysis_output/comparison_run_001/{bev.png, range_histogram.png, rcs_vs_range.png, metrics.png, analysis_report.md}`
 
-1. Fix scipy in ros2-bridge container (`pip install --upgrade scipy` or pin in Dockerfile)
-2. Re-run analysis on the recorded bag
-3. Run `radar_analysis/sensor_fusion.py` for per-frame fusion metrics
-4. Run `radar_analysis/radar_map.py` for occupancy grid comparison
-5. Update EXECUTION_PLAN.md with results
+**sensor_fusion.py** — per-frame fusion metrics (25,853 frame pairs):
+- Mean radar/lidar ratio: 0.005 (expected: ~14 radar pts vs ~2700 lidar pts per chunk)
+- Coverage oscillates ~0–40% due to lidar chunking (each chunk covers different angular region)
+- Output: `fusion_metrics.csv` (25,853 rows) + `fusion_summary.png` (3-panel time series)
+
+**radar_map.py** — requires `/odom` topic (not recorded since robot is stationary). Skipped.
+
+### 17d. Key Observations
+
+- **RCS vs Range plot** shows clear material response: pillars at 5–10m have RCS 15–25 dBsm,
+  buildings at 22–41m have RCS -10 to +40 dBsm (wide spread from multi-bounce)
+- **Range histogram** shows radar detections concentrated at 5–45m (within scene geometry),
+  while lidar detects structure out to 175m
+- **BEV plot** confirms radar detections align with scene geometry (pillars + buildings)
+- **Coverage ratio** of 65.3% indicates most radar detections have a nearby lidar point,
+  with the 35% gap mostly due to lidar subsampling (500K from 85M) and angular mismatch
 
 ---
 
@@ -485,7 +501,7 @@ bags/comparison_run_001/
 - [x] **M1**: Urban scene geometry + headless runner — runtime verified ✅
 - [x] **M2**: Radar data visible in RViz2 — 13–16 real CFAR detections/frame at 97 Hz ✅
 - [x] **M3**: LiDAR data visible side-by-side with radar — OS1-128, ~43,776 pts/frame, 97 Hz ✅
-- [~] **M4**: Bag recorded (1.3 GiB, 314s); analysis blocked on scipy/numpy compat
+- [x] **M4**: Bag recorded + analysis complete — 65.3% coverage, 0.657m mean dist ✅
 - [ ] **M5**: Analysis report (coverage, accuracy, detection density)
 - [ ] **M6**: Material-aware radar tuning
 - [ ] **M7**: Final documentation and reproducibility

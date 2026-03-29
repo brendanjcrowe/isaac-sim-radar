@@ -198,7 +198,9 @@ def run_from_bag(
     Returns the list of FusionFrame objects for downstream use.
     """
     from rosbags.rosbag2 import Reader
-    from rosbags.serde import deserialize_cdr
+    from rosbags.typesys import get_typestore, Stores
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
+    deserialize_cdr = typestore.deserialize_cdr
 
     radar_msgs: List[Tuple[int, bytes, str]] = []
     lidar_msgs: List[Tuple[int, bytes, str]] = []

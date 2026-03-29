@@ -175,7 +175,9 @@ def build_from_bag(
     Requires: rosbags>=0.9
     """
     from rosbags.rosbag2 import Reader
-    from rosbags.serde import deserialize_cdr
+    from rosbags.typesys import get_typestore, Stores
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
+    deserialize_cdr = typestore.deserialize_cdr
 
     grid = RadarOccupancyGrid(**grid_kwargs)
 
