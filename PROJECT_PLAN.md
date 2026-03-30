@@ -95,42 +95,59 @@ format design, and UDP chunking. Full details in EXECUTION_PLAN.md.
 
 Isaac Sim ships with **no built-in city/urban outdoor environments**. The bundled environments are indoor only (warehouse, hospital, office, simple rooms). We must build or source an urban scene.
 
-### 1.1 Option A — Assemble from Omniverse/Third-Party Assets **[CHOSEN]**
+### 1.1 Current Environment — Procedural Geometry **[ACTIVE]**
 
-> **Decision**: Selected as the starting approach on 2026-02-13. Offers the best balance of control, realism, and time-to-first-result without requiring procedural generation tooling or external streaming infrastructure.
+> Used for M1–M4 pipeline development and validation. Simple procedural geometry
+> (4 buildings, 2 walls, 3 pillars) with correct material bindings. Sufficient
+> for validating the full sensor pipeline; will be replaced with richer environments.
 
-- Use **NVIDIA Omniverse SimReady assets** (buildings, roads, vehicles, street furniture) from the Omniverse Asset Store
-- Import city-block assets from **TurboSquid**, **Sketchfab**, or **CGTrader** in FBX/OBJ format
-- Convert to USD using Isaac Sim's built-in **Asset Converter** (File > Import)
-- Compose a town-scale scene (target: ~500m x 500m block with roads, intersections, buildings, parked cars, street signs, vegetation)
+### 1.2 Option A — Video-to-3D Reconstruction **[CHOSEN for scaling]**
 
-**Steps**:
-1. `TODO` Survey available SimReady urban assets in the Omniverse launcher
-2. `TODO` Identify and acquire supplemental third-party assets (roads, buildings, vehicles, vegetation)
-3. `TODO` Convert all assets to USD; verify units (meters) and orientation (Z-up)
-4. `TODO` Assemble a first draft town block in Isaac Sim Composer
-5. `TODO` Assign physically-based materials to all surfaces (critical for radar — see Phase 2.3)
-6. `TODO` Enable collisions on all geometry
-7. `TODO` Add HDR sky dome lighting for outdoor rendering
-8. `TODO` Generate NavMesh for autonomous navigation
+> **Decision**: Selected 2026-03-30 as the primary approach for scaling to diverse,
+> photorealistic suburban environments. Will be pursued after M5–M7 are complete.
 
-### 1.2 Option B — Procedural City Generation **[ALTERNATIVE]**
+Use real-world video datasets to reconstruct 3D environments for Isaac Sim:
 
-> May revisit if Option A proves too labour-intensive or if we need larger/more varied environments.
+- **Source data**: KITTI-360 (calibrated stereo, suburban Karlsruhe), nuScenes, Waymo Open,
+  or custom smartphone captures
+- **Geometry pipeline**: COLMAP (pose estimation) → 3DGUT/Gaussian Splatting → USDZ import
+  via Isaac Sim NuRec (supported in 5.0+), or COLMAP + OpenMVS → triangle mesh → USD
+- **Material pipeline** (critical for radar): Semantic segmentation on source frames
+  (RMSNet or SAM + CLIP) → project material labels onto mesh → map to Isaac Sim's ~40
+  non-visual material types. Ref: "Material-informed Gaussian Splatting for Digital Twin"
+  (arXiv 2511.20348) validates this approach for LiDAR reflectivity simulation
+- **Collision meshes**: Extract via SuGaR (Gaussian → Poisson mesh) or use OpenMVS mesh directly
 
-- Use **Blender + add-ons** (e.g., SceneCity, Buildify) to procedurally generate a town layout, export as USD/FBX
-- Alternatively, use **CesiumGS/cesium-omniverse** to stream real-world 3D tiles into Omniverse for photorealistic geo-referenced scenes
-- Pros: Scales to large areas quickly, reproducible layouts
-- Cons: Requires Blender pipeline expertise; Cesium streaming adds infrastructure complexity
+**Key risk**: No turnkey video-to-radar-simulatable-environment pipeline exists today.
+The material assignment step requires custom engineering (semantic segmentation + projection +
+mapping to Isaac Sim's `inputs:nonvisual:base` material bindings).
 
-### 1.3 Option C — NVIDIA Metropolis / Digital Twin Blueprint **[ALTERNATIVE]**
+**Pros**: Photorealistic, grounded in real-world geometry, infinite suburban variety
+**Cons**: Material assignment is a multi-week engineering effort with research risk
 
-> The Smart City AI Blueprint targets infrastructure monitoring, not robotics simulation. Worth tracking as the ecosystem matures.
+### 1.3 Option B — Procedural City Generation **[ALTERNATIVE]**
 
-- The [NVIDIA Omniverse Blueprint for Smart Cities](https://blogs.nvidia.com/blog/smart-city-ai-blueprint-europe/) provides a pipeline for building city-scale digital twins
-- Integrates Omniverse, Cosmos, NeMo, and Metropolis
-- Pros: Photorealistic, city-scale, maintained by NVIDIA
-- Cons: Not designed for robotics sim; may require significant adaptation
+> Fallback if video reconstruction proves too labour-intensive for material assignment.
+> Best "effort-to-radar-data" ratio since materials are correct by construction.
+
+- Use **Blender + add-ons** (e.g., SceneCity, Buildify) to procedurally generate layouts, export USD
+- Alternatively, **CesiumGS/cesium-omniverse** for real-world 3D tile streaming
+- **Hybrid variant**: procedural layouts + NVIDIA SimReady assets for key objects (vehicles,
+  street furniture) — best realism-to-effort ratio
+- Pros: Scales infinitely, materials correct by construction, reproducible
+- Cons: Looks procedural, requires Blender pipeline expertise
+
+### 1.4 Option C — Assemble from Omniverse/Third-Party Assets **[ALTERNATIVE]**
+
+- Use **NVIDIA Omniverse SimReady assets** + third-party FBX/OBJ from TurboSquid/Sketchfab
+- Convert to USD, compose manually in Isaac Sim Composer
+- Pros: Realistic individual assets with PBR materials
+- Cons: Manual assembly doesn't scale; limited suburban-specific assets
+
+### 1.5 Option D — NVIDIA Metropolis / Digital Twin Blueprint **[TRACKING]**
+
+- The [NVIDIA Omniverse Blueprint for Smart Cities](https://blogs.nvidia.com/blog/smart-city-ai-blueprint-europe/) provides city-scale digital twin pipeline
+- Not designed for robotics sim; tracking as ecosystem matures
 
 ### 1.4 Environment Setup Checklist (applies to all options)
 
@@ -368,6 +385,7 @@ All significant decisions are recorded here with date and rationale.
 | 2026-02-23 | **ROS2 Humble** (in containers, replaces Jazzy) | Native match for Ubuntu 22.04 in NVIDIA's container base image. LTS release. | Jazzy (requires Ubuntu 24.04, not supported in Isaac Sim containers) |
 | 2026-02-27 | **Isaac Sim 5.1 extension name migration** | `omni.isaac.ros2_bridge` → `isaacsim.ros2.bridge`; `omni.isaac.sensor` → `isaacsim.sensors.rtx`; OmniGraph node type strings follow same pattern. `omni.sensors.nv.*` unchanged (Omniverse layer). OmniRadar prim replaces Camera-based radar prim in 5.x. | N/A — breaking change mandated by NVIDIA |
 | 2026-03-05 | **RTX radar fix: Xvfb virtual framebuffer** | Headless `python.sh` launch path triggers carb plugin startup order bug in 5.1 — radar plugins crash before their required interfaces are registered. `xvfb-run -a` corrects initialization order. Chosen over downgrading to 4.5 (more rework) or using `isaac-sim.sh --exec` (less tested path). | Downgrade to 4.5; upgrade to 5.2+; use `isaac-sim.sh --exec` |
+| 2026-03-30 | **Environment scaling: Video-to-3D reconstruction** | Photorealistic suburban environments from real-world video (KITTI-360, nuScenes, custom captures) via COLMAP + 3DGUT/Gaussian Splatting + material segmentation. Critical gap: automated material assignment for WpmDmatApproxRadar requires semantic segmentation pipeline (RMSNet/SAM+CLIP → mesh projection → Isaac Sim non-visual material bindings). To be pursued after M5–M7 complete. | Procedural generation (Blender + SceneCity — lower risk, materials correct by construction, fallback if video-to-3D material pipeline proves too costly), Hybrid procedural + SimReady assets, manual assembly from Omniverse assets |
 
 ---
 
