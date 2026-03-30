@@ -2,7 +2,7 @@
 
 > **Status**: Active / Living Document
 > **Created**: 2026-02-13
-> **Last Updated**: 2026-03-20
+> **Last Updated**: 2026-03-30
 > **Isaac Sim Version**: 5.1.0
 > **Deployment**: Docker (multi-container)
 
@@ -353,9 +353,9 @@ radar_analysis/
 | **M2** | Radar data visible in RViz2 | ✅ COMPLETE — 13–16 CFAR detections/frame at 97 Hz |
 | **M3** | ROS2 bridge operational — radar & lidar point clouds visible in RViz2 | ✅ COMPLETE — both topics at 97 Hz, side-by-side in RViz2 |
 | **M4** | Offline analysis scripts producing comparison plots | ✅ COMPLETE — 314s bag, 4 plots, fusion metrics CSV, analysis report |
-| **M5** | LiDAR SLAM map generated, radar map generated, comparison complete | `TODO` |
-| **M6** | Sensor fusion pipeline operational | `TODO` |
-| **M7** | Scenario variations tested, results documented | `TODO` |
+| **M5** | Comprehensive analysis report — 10-section REPORT.md covering coverage, accuracy, RCS, occupancy map, fusion metrics | ✅ COMPLETE |
+| **M6** | Material-aware radar tuning | `TODO` |
+| **M7** | Final documentation and reproducibility | `TODO` |
 
 ---
 

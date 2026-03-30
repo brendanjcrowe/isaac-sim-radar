@@ -1,8 +1,8 @@
 # Isaac Sim Radar — Execution Plan
 
 > **Created**: 2026-02-17
-> **Last Updated**: 2026-03-20
-> **Status**: M3 complete — radar + lidar visible side-by-side in RViz2 ✅
+> **Last Updated**: 2026-03-30
+> **Status**: M5 complete — comprehensive analysis report written ✅
 
 ---
 
@@ -502,9 +502,29 @@ Output: `analysis_output/comparison_run_001/{bev.png, range_histogram.png, rcs_v
 - [x] **M2**: Radar data visible in RViz2 — 13–16 real CFAR detections/frame at 97 Hz ✅
 - [x] **M3**: LiDAR data visible side-by-side with radar — OS1-128, ~43,776 pts/frame, 97 Hz ✅
 - [x] **M4**: Bag recorded + analysis complete — 65.3% coverage, 0.657m mean dist ✅
-- [ ] **M5**: Analysis report (coverage, accuracy, detection density)
+- [x] **M5**: Comprehensive analysis report — REPORT.md with 10-section analysis ✅
 - [ ] **M6**: Material-aware radar tuning
 - [ ] **M7**: Final documentation and reproducibility
+
+---
+
+## Step 18: M5 — Comprehensive Analysis Report ✅ (2026-03-30)
+
+All analysis outputs from M4 compiled into `REPORT.md` (project root) covering:
+
+1. Sensor configuration (radar vs lidar specs)
+2. Scene geometry description
+3. Aggregate metrics (355K radar, 85M lidar, 65.3% coverage, 0.657m mean dist)
+4. Per-frame fusion analysis (25,853 synchronised frame pairs)
+5. Range distribution (multi-modal, matches scene geometry)
+6. RCS analysis (material-dependent: metal 15–25 dBsm, concrete -10 to +40 dBsm)
+7. Spatial comparison (BEV overlay)
+8. Radar occupancy map (0.1m resolution, ROS-compatible PGM+YAML)
+9. Fusion time series (3-panel: counts, coverage, velocity)
+10. Conclusions and next steps
+
+**Note**: `analysis_output/comparison_run_001/` owned by root (Docker), so report saved to
+project root as `REPORT.md` rather than inside the output directory.
 
 ---
 

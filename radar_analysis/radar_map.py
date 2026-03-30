@@ -185,7 +185,7 @@ def build_from_bag(
     odom_rows: List[Tuple[int, float, float, float]] = []
     with Reader(bag_path) as reader:
         odom_conns = [c for c in reader.connections if c.topic == odom_topic]
-        for conn, stamp, rawdata in reader.messages(connections=odom_conns):
+        for conn, stamp, rawdata in (reader.messages(connections=odom_conns) if odom_conns else []):
             msg = deserialize_cdr(rawdata, conn.msgtype)
             pos = msg.pose.pose.position
             ori = msg.pose.pose.orientation
